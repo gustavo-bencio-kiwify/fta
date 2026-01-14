@@ -4,14 +4,13 @@ import { WebClient } from "@slack/web-api";
 
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
-export async function slackRoutes(app: FastifyInstance) {
-  app.register(formbody);
+export async function interactive(app: FastifyInstance) {
+app.register(formbody);
 
-  app.post("/slack/interactive", async (req, reply) => {
+app.post("/slack/interactive", async (req, reply) => {
     const body = req.body as any;
     const payload = JSON.parse(body.payload);
 
-    // 1) Clique no botão da Home
     if (payload.type === "block_actions") {
       const action = payload.actions?.[0];
 
@@ -64,11 +63,9 @@ export async function slackRoutes(app: FastifyInstance) {
         });
       }
 
-      // ACK do Slack (sempre responda 200 rápido)
       return reply.status(200).send();
     }
 
-    // 2) Submit do modal (quando clicar "Criar")
     if (payload.type === "view_submission") {
       if (payload.view.callback_id === "create_task_modal") {
         const values = payload.view.state.values;
@@ -78,13 +75,6 @@ export async function slackRoutes(app: FastifyInstance) {
         const responsible = values.resp_block.responsible.selected_user as string;
 
         console.log("MODAL SUBMIT:", { title, description, responsible });
-
-        // Aqui você vai:
-        // - validar com Zod
-        // - salvar no Prisma
-        // - mandar DM no Slack etc.
-
-        // Se retornar {} o modal fecha
         return reply.send({});
       }
     }
@@ -92,55 +82,6 @@ export async function slackRoutes(app: FastifyInstance) {
     return reply.status(200).send();
   });
 
-  app.post("/slack/events", async (req, reply) => {
-  const body = req.body as any;
 
-  // URL verification
-  if (body?.type === "url_verification") {
-    return reply.send({ challenge: body.challenge });
-  }
-
-  // Eventos
-  if (body?.type === "event_callback") {
-    const event = body.event;
-
-    if (event?.type === "app_home_opened") {
-      console.log("Home opened by:", event.user);
-
-      try {
-        await slack.views.publish({
-          user_id: event.user,
-          view: {
-            type: "home",
-            blocks: [
-  { type: "header", text: { type: "plain_text", text: "FTA Kiwify" } },
-  {
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: { type: "plain_text", text: "➕ Criar Tarefa" },
-        style: "primary",
-        action_id: "home_create_task",
-        value: "create_task",
-      },
-    ],
-  },
-],
-
-          },
-        });
-
-        console.log("Home published!");
-      } catch (err) {
-        console.log("views.publish error:", err);
-      }
-    }
-  }
-
-  return reply.status(200).send();
-});
 
 }
-
-
