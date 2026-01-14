@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Task {
+  @@map("tasks")
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  delegation   String
+  responsible  String
+  term         DateTime?
+  recurrence   String?
+  urgency      String
+  createdAt    DateTime @default(now())
+  carbonCopies TaskCarbonCopy[]
+}
+
+model TaskCarbonCopy {
+  @@map("task-carbon-copies")
+  id          String @id @default(uuid())
+  taskId      String
+  task        Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  slackUserId String
+  createdAt   DateTime @default(now())
+  @@unique([taskId, slackUserId])
+  @@index([slackUserId])
+}
