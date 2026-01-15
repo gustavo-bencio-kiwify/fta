@@ -1,12 +1,13 @@
 import { fastify } from "fastify";
 import { createTask } from "./routes/createTask";
 import { homeRoutes } from "./routes/home";
+import { debugTables } from "./routes/debugTables";
 
 const app = fastify()
 
 app.register(createTask)
 app.register(homeRoutes)
-
+app.register(debugTables)
 
 const port = Number(process.env.PORT ?? 3030);
 

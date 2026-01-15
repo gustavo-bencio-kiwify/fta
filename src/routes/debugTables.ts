@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 
-export async function createTask(app:FastifyInstance) {
+export async function debugTables(app:FastifyInstance) {
 
    app.get("/debug/db/tables", async (req, reply) => {
   const tables = await prisma.$queryRaw`
