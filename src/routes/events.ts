@@ -7,7 +7,7 @@ const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 export async function events(app: FastifyInstance) {
   app.register(formbody);
 
-  app.post("/slack/events", async (req, reply) => {
+  app.post("/events", async (req, reply) => {
   const body = req.body as any;
 
   // URL verification
