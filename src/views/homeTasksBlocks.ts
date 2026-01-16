@@ -3,18 +3,25 @@ import type { AnyBlock } from "@slack/web-api";
 
 export type Urgency = "light" | "asap" | "turbo";
 
+// ✅ aceita string (o que vem do Prisma) e normaliza
 export type HomeTaskItem = {
   id: string;
   title: string;
   description?: string | null;
   delegation?: string | null; // slack id de quem delegou
   term?: Date | string | null;
-  urgency: Urgency;
+  urgency: Urgency | string;  // ✅ mudou aqui
 };
 
-function urgencyEmoji(u: Urgency) {
-  if (u === "light") return "🟢";
-  if (u === "asap") return "🟡";
+function normalizeUrgency(u: unknown): Urgency {
+  if (u === "light" || u === "asap" || u === "turbo") return u;
+  return "light"; // fallback seguro
+}
+
+function urgencyEmoji(u: unknown) {
+  const x = normalizeUrgency(u);
+  if (x === "light") return "🟢";
+  if (x === "asap") return "🟡";
   return "🔴";
 }
 
@@ -34,10 +41,7 @@ function taskTitleLine(t: HomeTaskItem) {
 
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `☐ ${taskTitleLine(t)}` },
-    },
+    { type: "section", text: { type: "mrkdwn", text: `☐ ${taskTitleLine(t)}` } },
   ];
 
   if (t.description) {
@@ -63,11 +67,13 @@ function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
   return blocks.concat(tasks.flatMap(renderTaskItem));
 }
 
-export function homeTasksBlocks(args: {
+export type HomeTasksData = {
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
-}): AnyBlock[] {
+};
+
+export function homeTasksBlocks(args: HomeTasksData): AnyBlock[] {
   return [
     { type: "header", text: { type: "plain_text", text: "📌 Suas tarefas (você é responsável)" } },
 
