@@ -1,22 +1,17 @@
 import { z } from "zod";
+import { Urgency } from "../generated/prisma/enums" 
 
-export const slackUserIdSchema = z.string().regex(/^[UW][A-Z0-9]+$/);
+const slackUserIdSchema = z.string().regex(/^[UW][A-Z0-9]+$/);
 
 export const createTaskSchema = z.object({
-  title: z.string().min(1),
+  title: z.string(),
   description: z.string().optional(),
-
-  delegation: slackUserIdSchema,   // quem criou
-  responsible: slackUserIdSchema,  // responsável
-
-  // No HTTP você estava usando z.coerce.date()
-  // No Slack modal vem "YYYY-MM-DD" (string). Vamos aceitar ambos.
+  delegation: slackUserIdSchema,
+  responsible: slackUserIdSchema,
   term: z.union([z.coerce.date(), z.string(), z.null()]).optional(),
-
   recurrence: z.string().optional(),
-  urgency: z.string().min(1),
-
-  carbonCopies: z.array(slackUserIdSchema).default([]),
+  urgency: z.nativeEnum(Urgency), // ✅ aqui
+  carbonCopies: z.array(slackUserIdSchema).optional(),
 });
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
