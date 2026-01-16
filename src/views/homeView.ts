@@ -8,7 +8,7 @@ export function homeView(): HomeView {
   return {
     type: "home",
     blocks: [
-      { type: "header", text: { type: "plain_text", text: "FTA Kiwify" } },
+      { type: "header", text: { type: "plain_text", text: "📋 Home" } },
       { type: "divider" },
       {
         type: "actions",
@@ -17,7 +17,6 @@ export function homeView(): HomeView {
             type: "button",
             action_id: HOME_CREATE_TASK_ACTION_ID,
             text: { type: "plain_text", text: "➕ Criar Tarefa" },
-            style: "primary",
             value: "create_task",
           },
           {

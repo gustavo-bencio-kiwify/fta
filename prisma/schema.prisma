@@ -7,7 +7,11 @@ datasource db {
   provider = "postgresql"
 }
 
-
+enum Urgency {
+  light
+  asap
+  turbo
+}
 
 model Task {
   @@map("tasks")
@@ -18,7 +22,7 @@ model Task {
   responsible  String
   term         DateTime?
   recurrence   String?
-  urgency      String
+  urgency      Urgency
   createdAt    DateTime @default(now())
   carbonCopies TaskCarbonCopy[]
 }
