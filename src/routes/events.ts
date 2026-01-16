@@ -1,8 +1,8 @@
-// src/slack/routes/events.ts (ou onde estiver)
+// src/slack/routes/events.ts
 import type { FastifyInstance } from "fastify";
 import type { WebClient } from "@slack/web-api";
-import { prisma } from "../lib/prisma";
-import { homeTasksView } from "../views/homeTaskView";
+import { prisma } from "../lib/prisma";          // ajuste o path se necessário
+import { homeView } from "../views/homeView";       // 👈 agora é homeView
 
 function startOfDay(d: Date) {
   const x = new Date(d);
@@ -19,7 +19,6 @@ export async function events(app: FastifyInstance, slack: WebClient) {
   app.post("/events", async (req, reply) => {
     const body = req.body as any;
 
-    // URL verification
     if (body?.type === "url_verification") {
       return reply.send({ challenge: body.challenge });
     }
@@ -39,7 +38,6 @@ export async function events(app: FastifyInstance, slack: WebClient) {
         const tomorrowStart = startOfDay(tomorrow);
         const tomorrowEnd = endOfDay(tomorrow);
 
-        // Pega tarefas em que o usuário é responsável
         const tasks = await prisma.task.findMany({
           where: { responsible: userId },
           orderBy: [{ term: "asc" }, { createdAt: "desc" }],
@@ -53,23 +51,13 @@ export async function events(app: FastifyInstance, slack: WebClient) {
           },
         });
 
-        const tasksToday = tasks.filter(
-          (t) => t.term && t.term >= todayStart && t.term <= todayEnd
-        );
-        const tasksTomorrow = tasks.filter(
-          (t) => t.term && t.term >= tomorrowStart && t.term <= tomorrowEnd
-        );
-        const tasksFuture = tasks.filter(
-          (t) => t.term && t.term > tomorrowEnd
-        );
+        const tasksToday = tasks.filter((t) => t.term && t.term >= todayStart && t.term <= todayEnd);
+        const tasksTomorrow = tasks.filter((t) => t.term && t.term >= tomorrowStart && t.term <= tomorrowEnd);
+        const tasksFuture = tasks.filter((t) => t.term && t.term > tomorrowEnd);
 
         await slack.views.publish({
           user_id: userId,
-          view: homeTasksView({
-            tasksToday,
-            tasksTomorrow,
-            tasksFuture,
-          }),
+          view: homeView({ tasksToday, tasksTomorrow, tasksFuture }), // 👈 home completa
         });
       }
     }
