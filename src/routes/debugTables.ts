@@ -1,17 +1,15 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 
-export async function debugTables(app:FastifyInstance) {
+export async function debug(app:FastifyInstance) {
 
-   app.get("/debug/db/tables", async (req, reply) => {
-  const tables = await prisma.$queryRaw`
-    SELECT tablename
-    FROM pg_catalog.pg_tables
-    WHERE schemaname = 'public'
-    ORDER BY tablename;
-  `;
-  return reply.send(tables);
+  app.get("/debug/me/:id", async (req, reply) => {
+  const id = (req.params as any).id;
+  const tasks = await prisma.task.findMany({
+    where: { responsible: id },
+    select: { id: true, title: true, responsible: true, delegation: true, term: true, urgency: true },
+  });
+  return reply.send(tasks);
 });
-
-
+  
 }
