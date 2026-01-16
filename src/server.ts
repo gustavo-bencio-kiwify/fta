@@ -1,14 +1,14 @@
 import { fastify } from "fastify";
 import { createTask } from "./routes/createTask";
 import { slackRoutes } from "./routes/slackRoutes";
-import { debugTables } from "./routes/debugTables";
+import { debug } from "./routes/debugTables";
 import { sendMessage } from "./routes/sendMessage";
 
 const app = fastify()
 
 app.register(createTask)
 app.register(slackRoutes)
-app.register(debugTables)
+app.register(debug)
 app.register(sendMessage)
 
 
