@@ -9,7 +9,7 @@ import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID, } from "../vi
 
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
-export async function interactive(app: FastifyInstance) {
+export async function interactive(app: FastifyInstance, slack: WebClient) {
   app.register(formbody);
 
   app.post("/interactive", async (req, reply) => {
@@ -47,7 +47,6 @@ export async function interactive(app: FastifyInstance) {
         return reply.status(200).send(); // ACK padrão
       }
 
-      // submit do modal: criar task
       if (
         payload.type === "view_submission" &&
         payload.view?.callback_id === CREATE_TASK_MODAL_CALLBACK_ID

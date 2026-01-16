@@ -1,61 +1,31 @@
-import { FastifyInstance } from "fastify";
-import formbody from "@fastify/formbody";
-import { WebClient } from "@slack/web-api";
+// src/slack/routes/events.ts
+import type { FastifyInstance } from "fastify";
+import type { WebClient } from "@slack/web-api";
+import { publishHome } from "../services/publishHome";
 
-const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
-
-export async function events(app: FastifyInstance) {
-  app.register(formbody);
-
+export async function events(app: FastifyInstance, slack: WebClient) {
   app.post("/events", async (req, reply) => {
-  const body = req.body as any;
+    const body = req.body as any;
 
-  // URL verification
-  if (body?.type === "url_verification") {
-    return reply.send({ challenge: body.challenge });
-  }
+    // 1) Slack URL verification (challenge)
+    if (body?.type === "url_verification") {
+      return reply.send({ challenge: body.challenge });
+    }
 
-  // Eventos
-  if (body?.type === "event_callback") {
-    const event = body.event;
+    // 2) Events
+    if (body?.type === "event_callback") {
+      const event = body.event;
 
-    if (event?.type === "app_home_opened") {
-      console.log("Home opened by:", event.user);
-
-      try {
-        await slack.views.publish({
-          user_id: event.user,
-          view: {
-            type: "home",
-            blocks: [
-  { type: "header", text: { type: "plain_text", text: "FTA Kiwify" } },
-  {
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: { type: "plain_text", text: "➕ Criar Tarefa" },
-        style: "primary",
-        action_id: "home_create_task",
-        value: "create_task",
-      },
-    ],
-  },
-],
-
-          },
-        });
-
-        console.log("Home published!");
-      } catch (err) {
-        console.log("views.publish error:", err);
+      if (event?.type === "app_home_opened") {
+        try {
+          await publishHome(slack, event.user);
+        } catch (err) {
+          req.log.error(err);
+        }
       }
     }
-  }
 
-  return reply.status(200).send();
-});
-
+    // ACK sempre
+    return reply.status(200).send();
+  });
 }
-
-
