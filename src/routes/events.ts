@@ -1,21 +1,9 @@
 // src/slack/routes/events.ts
 import type { FastifyInstance } from "fastify";
 import type { WebClient } from "@slack/web-api";
-import { prisma } from "../lib/prisma"; // <-- ajuste o caminho se necessário
+import { prisma } from "../lib/prisma";
 import { homeView } from "../views/homeView";
 import type { HomeTaskItem, Urgency } from "../views/homeTasksBlocks";
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
 
 function normalizeUrgency(u: unknown): Urgency {
   if (u === "light" || u === "asap" || u === "turbo") return u;
@@ -40,11 +28,22 @@ function toHomeTaskItem(t: {
   };
 }
 
+// compara por dia (UTC) pra não dar briga de fuso
+function ymdUTC(d: Date) {
+  return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+}
+
+function termKeyUTC(term: HomeTaskItem["term"]) {
+  if (!term) return null;
+  const d = term instanceof Date ? term : new Date(term);
+  if (Number.isNaN(d.getTime())) return null;
+  return ymdUTC(d);
+}
+
 export async function events(app: FastifyInstance, slack: WebClient) {
   app.post("/events", async (req, reply) => {
     const body = req.body as any;
 
-    // URL verification (Slack Events)
     if (body?.type === "url_verification") {
       return reply.send({ challenge: body.challenge });
     }
@@ -54,15 +53,6 @@ export async function events(app: FastifyInstance, slack: WebClient) {
 
       if (event?.type === "app_home_opened") {
         const userId = event.user as string;
-
-        const now = new Date();
-        const todayStart = startOfDay(now);
-        const todayEnd = endOfDay(now);
-
-        const tomorrow = new Date(now);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStart = startOfDay(tomorrow);
-        const tomorrowEnd = endOfDay(tomorrow);
 
         // 1) Busca tasks do usuário (responsible)
         const rawTasks = await prisma.task.findMany({
@@ -81,26 +71,30 @@ export async function events(app: FastifyInstance, slack: WebClient) {
         // 2) Converte para o tipo do front
         const tasks: HomeTaskItem[] = rawTasks.map(toHomeTaskItem);
 
-        // 3) Split Hoje / Amanhã / Futuras
-        const tasksToday = tasks.filter(
-          (t) => t.term && new Date(t.term) >= todayStart && new Date(t.term) <= todayEnd
-        );
+        // 3) Chaves de hoje/amanhã em UTC
+        const now = new Date();
+        const todayKey = ymdUTC(now);
 
-        const tasksTomorrow = tasks.filter(
-          (t) =>
-            t.term &&
-            new Date(t.term) >= tomorrowStart &&
-            new Date(t.term) <= tomorrowEnd
-        );
+        const tomorrow = new Date(now);
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+        const tomorrowKey = ymdUTC(tomorrow);
 
-        const tasksFuture = tasks.filter(
-          (t) => t.term && new Date(t.term) > tomorrowEnd
-        );
+        // 4) Split Hoje / Amanhã / Futuras por chave (YYYY-MM-DD)
+        const tasksToday = tasks.filter((t) => termKeyUTC(t.term) === todayKey);
+        const tasksTomorrow = tasks.filter((t) => termKeyUTC(t.term) === tomorrowKey);
+        const tasksFuture = tasks.filter((t) => {
+          const k = termKeyUTC(t.term);
+          return k !== null && k > tomorrowKey;
+        });
 
-        // (Opcional) Sem prazo -> jogar em Futuras ou criar "Sem prazo"
+        // (Opcional) sem prazo:
         // const tasksNoTerm = tasks.filter((t) => !t.term);
 
-        // 4) Publica a HOME completa (botões + lista)
+        // DEBUG (depois remove)
+        console.log("HOME user:", userId);
+        console.log("todayKey:", todayKey, "tomorrowKey:", tomorrowKey);
+        console.log("tasks:", tasks.map(t => ({ id: t.id, term: t.term, key: termKeyUTC(t.term) })));
+
         await slack.views.publish({
           user_id: userId,
           view: homeView({
