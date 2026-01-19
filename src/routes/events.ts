@@ -56,17 +56,29 @@ export async function events(app: FastifyInstance, slack: WebClient) {
 
         // 1) Busca tasks do usuário (responsible)
         const rawTasks = await prisma.task.findMany({
-          where: { responsible: userId },
-          orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-          select: {
-            id: true,
-            title: true,
-            description: true,
-            term: true,
-            urgency: true,
-            delegation: true,
-          },
-        });
+  where: { responsible: userId },
+  orderBy: [{ createdAt: "desc" }],
+  select: { id: true, title: true, description: true, term: true, urgency: true, delegation: true },
+});
+
+console.log("[EVENTS] rawTasks:", rawTasks.length, rawTasks.map(t => ({
+  id: t.id, term: t.term?.toISOString(), urgency: t.urgency
+})));
+
+await slack.views.publish({
+  user_id: userId,
+  view: {
+    type: "home",
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "FTA Kiwify" } },
+      { type: "section", text: { type: "mrkdwn", text: `Tarefas encontradas: *${rawTasks.length}*` } },
+      { type: "divider" },
+      ...rawTasks.flatMap(t => ([
+        { type: "section", text: { type: "mrkdwn", text: `• *${t.title}*  _(${t.urgency})_  ${t.term ? `- ${t.term.toISOString()}` : ""}` } },
+      ])),
+    ],
+  },
+});
 
         // 2) Converte para o tipo do front
         const tasks: HomeTaskItem[] = rawTasks.map(toHomeTaskItem);
@@ -104,6 +116,10 @@ export async function events(app: FastifyInstance, slack: WebClient) {
           }),
         });
       }
+    }
+    console.log("[EVENTS] received:", body?.type);
+    if (body?.type === "event_callback") {
+      console.log("[EVENTS] event:", body.event?.type, "user:", body.event?.user);
     }
 
     return reply.status(200).send();
