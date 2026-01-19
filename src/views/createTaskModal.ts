@@ -1,11 +1,13 @@
+// src/slack/views/createTaskModal.ts
 import type { ModalView } from "@slack/web-api";
 
 export const CREATE_TASK_MODAL_CALLBACK_ID = "create_task_modal" as const;
 
-export function createTaskModalView() : ModalView {
+export function createTaskModalView(): ModalView {
   return {
     type: "modal",
     callback_id: CREATE_TASK_MODAL_CALLBACK_ID,
+
     title: { type: "plain_text", text: "Criar tarefa" },
     submit: { type: "plain_text", text: "Criar" },
     close: { type: "plain_text", text: "Cancelar" },
@@ -15,11 +17,7 @@ export function createTaskModalView() : ModalView {
         type: "input",
         block_id: "title_block",
         label: { type: "plain_text", text: "Título" },
-        element: {
-          type: "plain_text_input",
-          action_id: "title",
-          placeholder: { type: "plain_text", text: "Ex: Fechar relatório do mês" },
-        },
+        element: { type: "plain_text_input", action_id: "title" },
       },
       {
         type: "input",
@@ -30,29 +28,20 @@ export function createTaskModalView() : ModalView {
           type: "plain_text_input",
           action_id: "description",
           multiline: true,
-          placeholder: { type: "plain_text", text: "Detalhes da tarefa..." },
         },
       },
       {
         type: "input",
         block_id: "resp_block",
-        label: { type: "plain_text", text: "Responsável - Quem vai realizar a atividade?" },
-        element: {
-          type: "users_select",
-          action_id: "responsible",
-          placeholder: { type: "plain_text", text: "Selecione um usuário" },
-        },
+        label: { type: "plain_text", text: "Responsável" },
+        element: { type: "users_select", action_id: "responsible" },
       },
       {
         type: "input",
         optional: true,
         block_id: "due_block",
         label: { type: "plain_text", text: "Prazo" },
-        element: {
-          type: "datepicker",
-          action_id: "due_date",
-          placeholder: { type: "plain_text", text: "Selecione uma data" },
-        },
+        element: { type: "datepicker", action_id: "due_date" },
       },
       {
         type: "input",
@@ -61,7 +50,6 @@ export function createTaskModalView() : ModalView {
         element: {
           type: "static_select",
           action_id: "urgency",
-          placeholder: { type: "plain_text", text: "Selecione" },
           options: [
             { text: { type: "plain_text", text: "🟢 Light" }, value: "light" },
             { text: { type: "plain_text", text: "🟡 ASAP" }, value: "asap" },
@@ -73,16 +61,9 @@ export function createTaskModalView() : ModalView {
         type: "input",
         optional: true,
         block_id: "cc_block",
-        label: {
-          type: "plain_text",
-          text: "Pessoa em cópia - Selecione caso alguém precise acompanhar a atividade",
-        },
-        element: {
-          type: "multi_users_select",
-          action_id: "carbon_copies",
-          placeholder: { type: "plain_text", text: "Selecione usuários (opcional)" },
-        },
+        label: { type: "plain_text", text: "Pessoas em cópia" },
+        element: { type: "multi_users_select", action_id: "carbon_copies" },
       },
     ],
-  } as const;
+  };
 }

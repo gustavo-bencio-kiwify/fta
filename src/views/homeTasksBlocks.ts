@@ -48,7 +48,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
         action_id: TASK_TOGGLE_ACTION_ID,
         options: [
           {
-            text: { type: "mrkdwn", text: "Concluir" },
+            text: { type: "mrkdwn", text: "" },
             value: t.id, // <-- aqui vai o id da task
           },
         ],
