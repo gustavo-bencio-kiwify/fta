@@ -1,7 +1,6 @@
-// src/slack/views/homeTasksBlocks.ts
 import type { AnyBlock } from "@slack/web-api";
-
 export type Urgency = "light" | "asap" | "turbo";
+export const TASK_TOGGLE_ACTION_ID = "task_toggle_done" as const;
 
 // ✅ aceita string (o que vem do Prisma) e normaliza
 export type HomeTaskItem = {
@@ -41,7 +40,20 @@ function taskTitleLine(t: HomeTaskItem) {
 
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
-    { type: "section", text: { type: "mrkdwn", text: `☐ ${taskTitleLine(t)}` } },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: taskTitleLine(t) },
+      accessory: {
+        type: "checkboxes",
+        action_id: TASK_TOGGLE_ACTION_ID,
+        options: [
+          {
+            text: { type: "mrkdwn", text: "Concluir" },
+            value: t.id, // <-- aqui vai o id da task
+          },
+        ],
+      },
+    },
   ];
 
   if (t.description) {
