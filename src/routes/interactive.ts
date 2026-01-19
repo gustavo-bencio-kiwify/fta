@@ -104,12 +104,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             // Você precisa ter algum campo pra marcar como concluído.
             // Vou assumir que existe `done: boolean` e `doneAt: Date?`.
             // Se seu schema for diferente, me fala o modelo que eu ajusto.
-            await prisma.task.update({
+            await prisma.task.delete({
               where: { id: taskId },
-              data: {
-                done: true,
-                doneAt: new Date(),
-              },
             });
 
             if (userId) {
