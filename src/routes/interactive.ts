@@ -103,9 +103,10 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
       }
 
       return reply.status(200).send();
-    } catch (err) {
-      req.log.error(err);
-      // Slack precisa de ACK rápido mesmo em erro
+    } catch (err: any) {
+      req.log.error({ err }, "[interactive] error");
+      // para view_submission, você pode devolver erro no modal se quiser,
+      // mas por enquanto pelo menos LOGA.
       return reply.status(200).send();
     }
   });

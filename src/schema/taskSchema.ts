@@ -1,17 +1,26 @@
+// src/schema/taskSchema.ts
 import { z } from "zod";
-import { Urgency } from "../generated/prisma/enums" 
 
 const slackUserIdSchema = z.string().regex(/^[UW][A-Z0-9]+$/);
 
+export const urgencySchema = z.enum(["light", "asap", "turbo"]);
+
 export const createTaskSchema = z.object({
-  title: z.string(),
+  title: z.string().min(1),
   description: z.string().optional(),
   delegation: slackUserIdSchema,
   responsible: slackUserIdSchema,
-  term: z.union([z.coerce.date(), z.string(), z.null()]).optional(),
+
+  // ✅ null não vira 1970
+  term: z.preprocess((v) => {
+    if (v === null || v === undefined || v === "") return null;
+    return v;
+  }, z.coerce.date().nullable()).optional(),
+
   recurrence: z.string().optional(),
-  urgency: z.nativeEnum(Urgency), // ✅ aqui
-  carbonCopies: z.array(slackUserIdSchema).optional(),
+  urgency: urgencySchema,
+
+  carbonCopies: z.array(slackUserIdSchema).optional().default([]),
 });
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
