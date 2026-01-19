@@ -1,13 +1,18 @@
+// src/slack/routes/interactive.ts
 import type { FastifyInstance } from "fastify";
 import formbody from "@fastify/formbody";
 import type { WebClient } from "@slack/web-api";
 
-import { createTaskModalView, CREATE_TASK_MODAL_CALLBACK_ID } from "../views/createTaskModal";
+import {
+  createTaskModalView,
+  CREATE_TASK_MODAL_CALLBACK_ID,
+} from "../views/createTaskModal";
+
 import {
   HOME_CREATE_TASK_ACTION_ID,
   HOME_SEND_BATCH_ACTION_ID,
   HOME_NEW_PROJECT_ACTION_ID,
-} from "../views/homeHeaderActions"; // ou homeView, conforme seu projeto
+} from "../views/homeHeaderActions";
 
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
 import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID } from "../views/createProjectModal";
@@ -19,35 +24,25 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
   app.register(formbody);
 
   app.post("/interactive", async (req, reply) => {
-    // Slack manda application/x-www-form-urlencoded com body.payload
-    const body = req.body as any;
+    const raw = req.body as any;
 
-    let payload: any;
-    try {
-      payload = JSON.parse(body.payload);
-    } catch (e) {
-      req.log.error({ body }, "[INTERACTIVE] payload JSON.parse failed");
-      return reply.code(200).send(); // ACK
-    }
+    // Slack manda form-encoded com { payload: "json..." }
+    const payload = raw?.payload ? JSON.parse(raw.payload) : raw;
 
-    // Debug básico (deixa bem claro se está entrando no lugar certo)
+    // LOG útil: tipo + callback/action
     req.log.info(
       {
-        type: payload.type,
-        callback_id: payload.view?.callback_id,
-        user: payload.user?.id,
+        type: payload?.type,
+        cb: payload?.view?.callback_id,
+        action: payload?.actions?.[0]?.action_id,
       },
       "[INTERACTIVE] received"
     );
 
     try {
-      // =====================
-      // 1) Clique nos botões
-      // =====================
+      // 1) Botões (Home)
       if (payload.type === "block_actions") {
         const actionId = payload.actions?.[0]?.action_id as string | undefined;
-
-        req.log.info({ actionId }, "[INTERACTIVE] block_actions");
 
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
           await slack.views.open({
@@ -70,100 +65,94 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           });
         }
 
-        return reply.code(200).send(); // ACK
+        // ✅ ACK rápido SEMPRE
+        return reply.code(200).send();
       }
 
-      // =====================
-      // 2) Submit do modal: Criar Task
-      // =====================
-      if (payload.type === "view_submission" && payload.view?.callback_id === CREATE_TASK_MODAL_CALLBACK_ID) {
-        const values = payload.view.state.values;
+      // 2) Submit do modal de criar tarefa
+      if (payload.type === "view_submission") {
+        const cb = payload.view?.callback_id as string | undefined;
 
-        // Extraindo valores
-        const title = values.title_block?.title?.value as string | undefined;
-        const description = values.desc_block?.description?.value as string | undefined;
-
-        const responsible = values.resp_block?.responsible?.selected_user as string | undefined;
-        const dueDate = values.due_block?.due_date?.selected_date as string | undefined; // "YYYY-MM-DD"
-
-        const urgency = values.urgency_block?.urgency?.selected_option?.value as
-          | "light"
-          | "asap"
-          | "turbo"
-          | undefined;
-
-        const carbonCopies =
-          (values.cc_block?.carbon_copies?.selected_users as string[] | undefined) ?? [];
-
-        req.log.info(
-          { title, responsible, dueDate, urgency, carbonCopiesCount: carbonCopies.length },
-          "[INTERACTIVE] create_task_modal submit values"
-        );
-
-        // Validações mínimas (pra evitar salvar lixo e pra mostrar erro no modal)
-        const errors: Record<string, string> = {};
-        if (!title || !title.trim()) errors["title_block"] = "Informe um título.";
-        if (!responsible) errors["resp_block"] = "Selecione um responsável.";
-        if (!urgency) errors["urgency_block"] = "Selecione o nível de urgência.";
-
-        if (Object.keys(errors).length > 0) {
-          return reply.code(200).send({
-            response_action: "errors",
-            errors,
-          });
+        // ✅ Se não for o modal certo, só fecha
+        if (cb !== CREATE_TASK_MODAL_CALLBACK_ID &&
+            cb !== SEND_BATCH_MODAL_CALLBACK_ID &&
+            cb !== CREATE_PROJECT_MODAL_CALLBACK_ID) {
+          req.log.warn({ cb }, "[INTERACTIVE] view_submission unknown callback_id");
+          return reply.send({});
         }
 
-        // ✅ ACK rápido pro Slack fechar o modal
-        reply.code(200).send({});
+        // ✅ IMPORTANTE: responder rápido pro Slack.
+        // Vamos capturar os dados e salvar. Se der erro de validação, dá pra retornar errors no modal,
+        // mas por enquanto vamos logar e fechar.
+        if (cb === CREATE_TASK_MODAL_CALLBACK_ID) {
+          const values = payload.view.state.values;
 
-        // ✅ Faz a criação “em background” (evita timeout do Slack)
-        void (async () => {
-          try {
-            const created = await createTaskService({
-              title,
-              description,
-              delegation: payload.user.id, // quem criou
-              responsible,
-              term: dueDate ?? null,
-              urgency,
-              recurrence: "none",
-              carbonCopies,
-            });
+          // helpers
+          const get = (blockId: string, actionId: string) => values?.[blockId]?.[actionId];
 
-            req.log.info({ taskId: created.id }, "[INTERACTIVE] task created in DB");
+          const title = get("title_block", "title")?.value as string;
+          const description = get("desc_block", "description")?.value as string | undefined;
 
-            // Atualiza a Home do usuário pra ele ver a tarefa aparecer
-            await publishHome(slack, payload.user.id);
+          const responsible = get("resp_block", "responsible")?.selected_user as string;
 
-            req.log.info("[INTERACTIVE] home republished after create");
-          } catch (err) {
-            req.log.error(err, "[INTERACTIVE] createTaskService failed");
-          }
-        })();
+          const dueDate = get("due_block", "due_date")?.selected_date as string | undefined;
 
-        return; // já respondemos acima
+          const urgency = get("urgency_block", "urgency")?.selected_option?.value as
+            | "light"
+            | "asap"
+            | "turbo";
+
+          const carbonCopies =
+            (get("cc_block", "carbon_copies")?.selected_users as string[] | undefined) ?? [];
+
+          const delegation = payload.user?.id as string;
+
+          // DEBUG: mostra exatamente o que chegou
+          req.log.info(
+            { title, description, responsible, dueDate, urgency, carbonCopies, delegation },
+            "[INTERACTIVE] create_task submit values"
+          );
+
+          // Salva
+          const created = await createTaskService({
+            title,
+            description,
+            delegation,
+            responsible,
+            term: dueDate ?? null,
+            urgency,
+            recurrence: "none",
+            carbonCopies,
+          });
+
+          req.log.info({ id: created.id }, "[INTERACTIVE] task created");
+
+          // Opcional: republish da home após criar
+          // (isso é o que normalmente faz a task aparecer sem precisar reabrir)
+          await publishHome(slack, delegation);
+
+          // ✅ fecha modal
+          return reply.send({});
+        }
+
+        if (cb === SEND_BATCH_MODAL_CALLBACK_ID) {
+          req.log.info("[INTERACTIVE] send batch submit");
+          return reply.send({});
+        }
+
+        if (cb === CREATE_PROJECT_MODAL_CALLBACK_ID) {
+          req.log.info("[INTERACTIVE] create project submit");
+          return reply.send({});
+        }
+
+        return reply.send({});
       }
 
-      // =====================
-      // 3) Submit do modal: Lote
-      // =====================
-      if (payload.type === "view_submission" && payload.view?.callback_id === SEND_BATCH_MODAL_CALLBACK_ID) {
-        // TODO: implementar
-        return reply.code(200).send({});
-      }
-
-      // =====================
-      // 4) Submit do modal: Projeto
-      // =====================
-      if (payload.type === "view_submission" && payload.view?.callback_id === CREATE_PROJECT_MODAL_CALLBACK_ID) {
-        // TODO: implementar
-        return reply.code(200).send({});
-      }
-
-      return reply.code(200).send(); // ACK padrão
-    } catch (err) {
-      req.log.error(err, "[INTERACTIVE] handler error");
-      return reply.code(200).send(); // ACK mesmo assim
+      return reply.code(200).send();
+    } catch (err: any) {
+      req.log.error({ err }, "[INTERACTIVE] error");
+      // ✅ Slack exige 200 mesmo em erro (senão ele reenvia)
+      return reply.code(200).send();
     }
   });
 }
