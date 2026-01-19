@@ -24,7 +24,7 @@ export async function createTaskService(raw: unknown) {
   const task = await prisma.task.create({
     data: {
       title: data.title,
-      description: data.description,
+      description: data.description ?? null,
       delegation: data.delegation,
       responsible: data.responsible,
       term,

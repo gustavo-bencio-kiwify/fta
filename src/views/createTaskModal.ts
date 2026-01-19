@@ -38,7 +38,6 @@ export function createTaskModalView(): ModalView {
       },
       {
         type: "input",
-        optional: true,
         block_id: "due_block",
         label: { type: "plain_text", text: "Prazo" },
         element: { type: "datepicker", action_id: "due_date" },
