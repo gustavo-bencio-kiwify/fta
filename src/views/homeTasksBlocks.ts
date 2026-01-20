@@ -14,14 +14,12 @@ export type HomeTaskItem = {
 
 export const TASK_TOGGLE_DONE_ACTION_ID = "task_toggle_done" as const;
 
-// Botões do rodapé (por enquanto sem função)
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
 export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
 export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
 export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
 export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
 export const TASK_SELECT_ACTION_ID = "task_select" as const;
-
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -48,37 +46,25 @@ function taskTitleLine(t: HomeTaskItem) {
  * Colocamos o taskId no "value" da opção do checkbox.
  */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
-  const titleLine = `${urgencyEmoji(t.urgency)} *${t.title}*`;
-
-  const due = formatDateBR(t.term);
-  const metaParts: string[] = [];
-  if (due) metaParts.push(`vence ${due}`);
-  if (t.delegation) metaParts.push(`delegado por <@${t.delegation}>`);
-  const metaLine = metaParts.length ? `_${metaParts.join(" — ")}_` : null;
+  // espaço não-quebrável estreito (invisível)
+  const PAD = "\u202F\u202F\u202F\u202F\u202F\u202F"; // 6x NNBSP
 
   const blocks: AnyBlock[] = [
     {
       type: "section",
-      text: { type: "mrkdwn", text: titleLine },
+      text: { type: "mrkdwn", text: `${taskTitleLine(t)}${PAD}` },
       accessory: {
         type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID, // ✅ usa o const exportado
+        action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "plain_text", text: " " }, // “sem label”
+            text: { type: "plain_text", text: " " },
             value: t.id,
           },
         ],
       },
     },
   ];
-
-  if (metaLine) {
-    blocks.push({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: metaLine }],
-    });
-  }
 
   if (t.description) {
     blocks.push({
@@ -89,7 +75,6 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
 
   return blocks;
 }
-
 
 function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
   const blocks: AnyBlock[] = [
