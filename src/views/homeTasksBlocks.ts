@@ -7,16 +7,19 @@ export type HomeTaskItem = {
   id: string;
   title: string;
   description?: string | null;
-  delegation?: string | null;
+  delegation?: string | null; // slack id de quem delegou
   term?: Date | string | null;
   urgency: Urgency;
 };
 
-// action_id do checkbox (tem que bater com o interactive.ts)
-export const TASK_SELECT_ACTION_ID = "task_select" as const;
+export const TASK_TOGGLE_DONE_ACTION_ID = "task_toggle_done" as const;
 
-// action_id do botão concluir
+// Botões do rodapé (por enquanto sem função)
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
+export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
+export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
+export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
+export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -38,21 +41,21 @@ function taskTitleLine(t: HomeTaskItem) {
   return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
 }
 
+/**
+ * Um item: SECTION com checkbox no accessory => fica alinhado (não embaixo)
+ * Colocamos o taskId no "value" da opção do checkbox.
+ */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
     {
       type: "section",
       text: { type: "mrkdwn", text: taskTitleLine(t) },
-
-      // ✅ checkbox ao lado esquerdo (accessory)
-      // Observação: Slack exige "text" em options.
-      // Pra ficar “sem texto”, usamos um ponto invisível/leve.
       accessory: {
         type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID,
+        action_id: "task_toggle_done",
         options: [
           {
-            text: { type: "plain_text", text: " " }, // fica visualmente “vazio”
+            text: { type: "plain_text", text: " " }, // não mostra label
             value: t.id,
           },
         ],
@@ -98,18 +101,43 @@ export function homeTasksBlocks(args: {
     { type: "divider" },
 
     ...renderGroup("Futuras", args.tasksFuture),
+
     { type: "divider" },
 
-    // ✅ Botão de ação (age sobre as selecionadas)
+    // Botões do rodapé (voltam como no print)
     {
       type: "actions",
       elements: [
         {
           type: "button",
           style: "primary",
-          action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
           text: { type: "plain_text", text: "✅ Concluir selecionadas" },
+          action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
           value: "conclude_selected",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "❓ Enviar dúvida" },
+          action_id: TASKS_SEND_QUESTION_ACTION_ID,
+          value: "send_question",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "📅 Reprogramar Prazo" },
+          action_id: TASKS_RESCHEDULE_ACTION_ID,
+          value: "reschedule",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "🔎 Ver detalhes" },
+          action_id: TASKS_VIEW_DETAILS_ACTION_ID,
+          value: "view_details",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "🔄 Atualizar" },
+          action_id: TASKS_REFRESH_ACTION_ID,
+          value: "refresh",
         },
       ],
     },
