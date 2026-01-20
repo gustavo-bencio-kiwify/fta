@@ -38,7 +38,7 @@ function taskTitleLine(t: HomeTaskItem) {
   const due = formatDateBR(t.term);
   const dueText = due ? ` (vence ${due})` : "";
   const delegatedText = t.delegation ? ` — delegado por <@${t.delegation}>` : "";
-  return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
+  return `${urgencyEmoji(t.urgency)} *${t.title}*${delegatedText}`;
 }
 
 /**
