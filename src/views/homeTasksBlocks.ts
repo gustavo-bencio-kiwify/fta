@@ -48,22 +48,37 @@ function taskTitleLine(t: HomeTaskItem) {
  * Colocamos o taskId no "value" da opção do checkbox.
  */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
+  const titleLine = `${urgencyEmoji(t.urgency)} *${t.title}*`;
+
+  const due = formatDateBR(t.term);
+  const metaParts: string[] = [];
+  if (due) metaParts.push(`vence ${due}`);
+  if (t.delegation) metaParts.push(`delegado por <@${t.delegation}>`);
+  const metaLine = metaParts.length ? `_${metaParts.join(" — ")}_` : null;
+
   const blocks: AnyBlock[] = [
     {
       type: "section",
-      text: { type: "mrkdwn", text: taskTitleLine(t) },
+      text: { type: "mrkdwn", text: titleLine },
       accessory: {
         type: "checkboxes",
-        action_id: "task_toggle_done",
+        action_id: TASK_SELECT_ACTION_ID, // ✅ usa o const exportado
         options: [
           {
-            text: { type: "plain_text", text: " " }, // não mostra label
+            text: { type: "plain_text", text: " " }, // “sem label”
             value: t.id,
           },
         ],
       },
     },
   ];
+
+  if (metaLine) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: metaLine }],
+    });
+  }
 
   if (t.description) {
     blocks.push({
@@ -74,6 +89,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
 
   return blocks;
 }
+
 
 function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
   const blocks: AnyBlock[] = [
