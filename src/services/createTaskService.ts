@@ -8,9 +8,12 @@ function normalizeTerm(term: CreateTaskInput["term"]) {
 }
 
 export async function createTaskService(raw: unknown) {
-  // ✅ se falhar aqui, você precisa enxergar o erro no log
   const data = createTaskSchema.parse(raw);
   const term = normalizeTerm(data.term);
+   const description =
+    typeof data.description === "string" && data.description.trim() !== ""
+      ? data.description.trim()
+      : null;
 
   console.log("[createTaskService] input:", {
     title: data.title,
@@ -24,7 +27,7 @@ export async function createTaskService(raw: unknown) {
   const task = await prisma.task.create({
     data: {
       title: data.title,
-      description: data.description ?? null,
+      description,
       delegation: data.delegation,
       responsible: data.responsible,
       term,
