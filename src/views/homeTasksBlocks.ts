@@ -47,7 +47,7 @@ function taskTitleLine(t: HomeTaskItem) {
  */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   // espaço não-quebrável estreito (invisível)
-  const PAD = "\u202F\u202F\u202F\u202F\u202F\u202F"; // 6x NNBSP
+  const PAD = "\u202F\u202F\u202F\u202F\u202F\u202F\u202F\u202F\u202F\u202F"; // 6x NNBSP
 
   const blocks: AnyBlock[] = [
     {
