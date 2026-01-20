@@ -46,19 +46,16 @@ function taskTitleLine(t: HomeTaskItem) {
  * Colocamos o taskId no "value" da opção do checkbox.
  */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
-  // espaço não-quebrável estreito (invisível)
-  const PAD = "\u202F"
-
   const blocks: AnyBlock[] = [
     {
       type: "section",
-      text: { type: "mrkdwn", text: `${taskTitleLine(t)}${PAD}` },
+      text: { type: "mrkdwn", text: taskTitleLine(t) },
       accessory: {
         type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID,
+        action_id: "task_toggle_done",
         options: [
           {
-            text: { type: "plain_text", text: " " },
+            text: { type: "plain_text", text: " " }, // não mostra label
             value: t.id,
           },
         ],
