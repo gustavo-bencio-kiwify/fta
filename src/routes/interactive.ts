@@ -15,6 +15,7 @@ import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID } from "../vie
 import { createTaskService } from "../services/createTaskService";
 import { publishHome } from "../services/publishHome";
 import { prisma } from "../lib/prisma";
+import { notifyTaskCreated } from "../services/notifyTaskCreated";
 
 // action_id do checkbox nas tasks (tem que bater com o que você colocou no homeTasksBlocks.ts)
 const TASK_TOGGLE_DONE_ACTION_ID = "task_toggle_done" as const;
@@ -42,6 +43,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
   // Slack manda x-www-form-urlencoded com payload=...
   app.register(formbody);
 
+
   app.post("/interactive", async (req, reply) => {
     // ACK rápido sempre
     try {
@@ -50,6 +52,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
       const body = req.body as any;
       const payload: SlackPayload =
         typeof body?.payload === "string" ? JSON.parse(body.payload) : body?.payload;
+      const createdBy = payload.user.id;
 
       if (!payload) {
         req.log.warn({ body }, "[INTERACTIVE] missing payload");
@@ -151,11 +154,19 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           await createTaskService({
             title,
             description, // não obrigatória
-            delegation,
+            delegation: createdBy,
             responsible,
             term: dueDate ?? null,
             urgency,
             recurrence: "none",
+            carbonCopies,
+          });
+
+          await notifyTaskCreated({
+            slack,
+            createdBy,
+            taskTitle: title,
+            responsible,
             carbonCopies,
           });
 
