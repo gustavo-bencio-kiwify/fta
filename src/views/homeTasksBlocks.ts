@@ -20,6 +20,8 @@ export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
 export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
 export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
 export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
+export const TASK_SELECT_ACTION_ID = "task_select" as const;
+
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
