@@ -1,3 +1,4 @@
+// src/routes/interactive.ts
 import type { FastifyInstance } from "fastify";
 import type { WebClient } from "@slack/web-api";
 import formbody from "@fastify/formbody";
@@ -12,16 +13,16 @@ import { createTaskModalView, CREATE_TASK_MODAL_CALLBACK_ID } from "../views/cre
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
 import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID } from "../views/createProjectModal";
 
+import { TASK_SELECT_ACTION_ID, TASKS_CONCLUDE_SELECTED_ACTION_ID } from "../views/homeTasksBlocks";
+
 import { createTaskService } from "../services/createTaskService";
 import { publishHome } from "../services/publishHome";
-import { prisma } from "../lib/prisma";
 import { notifyTaskCreated } from "../services/notifyTaskCreated";
-
-const TASK_TOGGLE_DONE_ACTION_ID = "task_toggle_done" as const;
+import { prisma } from "../lib/prisma";
 
 type SlackPayload = any;
 
-// Helpers: extração segura do view.state.values
+// Helpers (modal view_submission)
 function getInputValue(values: any, blockId: string, actionId: string): string | undefined {
   return values?.[blockId]?.[actionId]?.value;
 }
@@ -38,8 +39,21 @@ function getSelectedUsers(values: any, blockId: string, actionId: string): strin
   return values?.[blockId]?.[actionId]?.selected_users ?? [];
 }
 
-function isSlackPayload(body: any): body is { payload: string } {
-  return body && typeof body.payload === "string";
+// Helper: pega IDs selecionados nos checkboxes na Home
+function collectSelectedTaskIdsFromViewState(viewStateValues: any): string[] {
+  const stateValues = viewStateValues ?? {};
+  const ids: string[] = [];
+
+  for (const block of Object.values(stateValues)) {
+    const actionState: any = (block as any)?.[TASK_SELECT_ACTION_ID];
+    const selected = (actionState?.selected_options ?? []) as Array<{ value: string }>;
+    for (const opt of selected) {
+      if (opt?.value) ids.push(opt.value);
+    }
+  }
+
+  // remove duplicados
+  return Array.from(new Set(ids));
 }
 
 export async function interactive(app: FastifyInstance, slack: WebClient) {
@@ -48,36 +62,20 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
   app.post("/interactive", async (req, reply) => {
     try {
-      req.log.info(
-        {
-          ct: req.headers["content-type"],
-          ua: req.headers["user-agent"],
-        },
-        "[INTERACTIVE] HIT"
-      );
+      req.log.info({ at: new Date().toISOString() }, "[INTERACTIVE] HIT");
 
       const body = req.body as any;
-
-      // Parse do payload
-      const payload: SlackPayload = isSlackPayload(body)
-        ? JSON.parse(body.payload)
-        : typeof body?.payload === "object"
-          ? body.payload
-          : null;
-
-      req.log.info(
-        { type: payload?.type, callback: payload?.view?.callback_id },
-        "[INTERACTIVE] parsed payload"
-      );
+      const payload: SlackPayload =
+        typeof body?.payload === "string" ? JSON.parse(body.payload) : body?.payload;
 
       if (!payload) {
         req.log.warn({ body }, "[INTERACTIVE] missing payload");
         return reply.status(200).send();
       }
 
-      // =========================
+      // ======================================================
       // 1) BLOCK ACTIONS (botões, checkboxes)
-      // =========================
+      // ======================================================
       if (payload.type === "block_actions") {
         const action = payload.actions?.[0];
         const actionId = action?.action_id as string | undefined;
@@ -85,7 +83,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
         req.log.info({ actionId, userId }, "[INTERACTIVE] block_actions");
 
-        // Botões da Home
+        // --- Botões do header da Home
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
           await slack.views.open({
             trigger_id: payload.trigger_id,
@@ -110,28 +108,41 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return reply.status(200).send();
         }
 
-        // Checkbox: hoje está deletando ao selecionar (você pediu "excluir done" e vinha deletando)
-        if (actionId === TASK_TOGGLE_DONE_ACTION_ID) {
-          // Se você usa checkbox com options[].value = taskId
-          const selected = action?.selected_options as Array<{ value: string }> | undefined;
-          const taskId = selected?.[0]?.value;
+        // --- Botão ✅ Concluir selecionadas (age nas tasks marcadas)
+        if (actionId === TASKS_CONCLUDE_SELECTED_ACTION_ID) {
+          const selectedTaskIds = collectSelectedTaskIdsFromViewState(payload.view?.state?.values);
 
-          req.log.info({ taskId, userId }, "[INTERACTIVE] checkbox toggle");
+          req.log.info(
+            { userId, selectedTaskIdsCount: selectedTaskIds.length, selectedTaskIds },
+            "[INTERACTIVE] conclude selected"
+          );
 
-          if (taskId) {
-            await prisma.task.delete({ where: { id: taskId } });
-            if (userId) await publishHome(slack, userId);
+          if (userId && selectedTaskIds.length) {
+            await prisma.task.deleteMany({
+              where: {
+                id: { in: selectedTaskIds },
+                responsible: userId, // proteção: só conclui as suas
+              },
+            });
           }
+
+          if (userId) await publishHome(slack, userId);
 
           return reply.status(200).send();
         }
 
-        return reply.status(200).send();
+        // (Opcional) Se quiser logar seleção individual sem fazer nada:
+        if (actionId === TASK_SELECT_ACTION_ID) {
+          // Não faz nada aqui — a ação real acontece no botão "Concluir selecionadas"
+          return reply.status(200).send();
+        }
+
+        return reply.status(200).send(); // ACK padrão
       }
 
-      // =========================
-      // 2) VIEW SUBMISSION (submit de modal)
-      // =========================
+      // ======================================================
+      // 2) VIEW SUBMISSION (submit de modais)
+      // ======================================================
       if (payload.type === "view_submission") {
         const cb = payload.view?.callback_id as string | undefined;
         const userId = payload.user?.id as string | undefined;
@@ -140,101 +151,83 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
         // ---- Criar tarefa
         if (cb === CREATE_TASK_MODAL_CALLBACK_ID) {
-          try {
-            const values = payload.view.state.values;
+          const values = payload.view.state.values;
 
-            const title = (getInputValue(values, "title_block", "title") ?? "").trim();
-            const descriptionRaw = getInputValue(values, "desc_block", "description");
-            const description = typeof descriptionRaw === "string" ? descriptionRaw.trim() : undefined;
+          const title = (getInputValue(values, "title_block", "title") ?? "").trim();
+          const description = getInputValue(values, "desc_block", "description")?.trim();
+          const responsible = getSelectedUser(values, "resp_block", "responsible") ?? "";
+          const dueDate = getSelectedDate(values, "due_block", "due_date"); // "YYYY-MM-DD" | undefined
+          const urgency = getSelectedOptionValue(values, "urgency_block", "urgency") ?? "light";
+          const carbonCopies = getSelectedUsers(values, "cc_block", "carbon_copies");
 
-            const responsible = (getSelectedUser(values, "resp_block", "responsible") ?? "").trim();
-            const dueDate = getSelectedDate(values, "due_block", "due_date"); // "YYYY-MM-DD" | undefined
-            const urgency = (getSelectedOptionValue(values, "urgency_block", "urgency") ?? "light").trim();
-            const carbonCopies = getSelectedUsers(values, "cc_block", "carbon_copies");
-
-            req.log.info(
-              {
-                title,
-                hasDescription: !!description,
-                responsible,
-                dueDate,
-                urgency,
-                carbonCopiesCount: carbonCopies.length,
-              },
-              "[INTERACTIVE] create_task parsed"
-            );
-
-            // validações mínimas pra UX no modal (antes de cair no Zod/Prisma)
-            const errors: Record<string, string> = {};
-            if (!title) errors["title_block"] = "Informe um título.";
-            if (!responsible) errors["resp_block"] = "Selecione um responsável.";
-
-            if (Object.keys(errors).length) {
-              return reply.send({ response_action: "errors", errors });
-            }
-
-            const createdBy = payload.user?.id as string;
-
-            const createdTask = await createTaskService({
+          req.log.info(
+            {
               title,
-              description: description?.length ? description : undefined, // opcional
-              delegation: createdBy,
               responsible,
-              term: dueDate ?? null,
+              dueDate,
               urgency,
-              recurrence: "none",
-              carbonCopies,
-            });
+              carbonCopiesCount: carbonCopies.length,
+              hasDescription: Boolean(description),
+            },
+            "[INTERACTIVE] create_task parsed"
+          );
 
-            req.log.info({ taskId: createdTask.id }, "[INTERACTIVE] task created");
+          // Quem criou (delegou)
+          const createdBy = userId ?? "";
 
-            // Notifica responsável + CC (seu service)
-            await notifyTaskCreated({
-              slack,
-              createdBy,
-              taskTitle: title,
-              responsible,
-              carbonCopies,
-            });
+          const task = await createTaskService({
+            title,
+            description: description ? description : undefined, // ✅ opcional
+            delegation: createdBy,
+            responsible,
+            term: dueDate ?? null,
+            urgency,
+            recurrence: "none",
+            carbonCopies,
+          });
 
-            // Atualiza Home do criador e do responsável
-            if (userId) await publishHome(slack, userId);
-            if (responsible && responsible !== userId) await publishHome(slack, responsible);
+          // Notifica responsável + CC
+          await notifyTaskCreated({
+            slack,
+            createdBy,
+            taskTitle: task.title,
+            responsible,
+            carbonCopies,
+          });
 
-            return reply.send({}); // fecha modal
-          } catch (err: any) {
-            req.log.error({ err }, "[INTERACTIVE] create_task failed");
+          // Atualiza Home do criador
+          if (userId) await publishHome(slack, userId);
 
-            // Mostra erro dentro do modal (Slack)
-            return reply.send({
-              response_action: "errors",
-              errors: {
-                // você pode trocar o bloco que recebe erro (title_block/desc_block/etc)
-                title_block: "Não consegui salvar a tarefa. Veja os logs no Render.",
-              },
-            });
+          // Atualiza Home do responsável (se for diferente)
+          if (responsible && responsible !== userId) {
+            await publishHome(slack, responsible);
           }
+
+          // Fecha modal
+          return reply.send({});
         }
 
-        // ---- Lote (placeholder)
+        // ---- Modal lote (placeholder)
         if (cb === SEND_BATCH_MODAL_CALLBACK_ID) {
           if (userId) await publishHome(slack, userId);
           return reply.send({});
         }
 
-        // ---- Projeto (placeholder)
+        // ---- Modal projeto (placeholder)
         if (cb === CREATE_PROJECT_MODAL_CALLBACK_ID) {
           if (userId) await publishHome(slack, userId);
           return reply.send({});
         }
 
+        // default: fecha modal
         return reply.send({});
       }
 
+      // default ACK
       return reply.status(200).send();
     } catch (err: any) {
       req.log.error({ err }, "[INTERACTIVE] error");
-      // Slack precisa de 200 sempre
+      // Slack precisa de 200 sempre, senão ele re-tenta
       return reply.status(200).send();
     }
   });

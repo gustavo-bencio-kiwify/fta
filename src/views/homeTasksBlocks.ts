@@ -1,32 +1,22 @@
 // src/slack/views/homeTasksBlocks.ts
 import type { AnyBlock } from "@slack/web-api";
 
-/**
- * Ações / IDs (usadas no interactive.ts)
- */
-export const TASK_SELECT_ACTION_ID = "task_select" as const;
-
-export const HOME_BULK_COMPLETE = "home_bulk_complete" as const;
-export const HOME_BULK_HELP = "home_bulk_help" as const;
-export const HOME_BULK_RESCHEDULE = "home_bulk_reschedule" as const;
-export const HOME_BULK_DETAILS = "home_bulk_details" as const;
-export const HOME_REFRESH = "home_refresh" as const;
-
-/**
- * Tipos do "front"
- */
 export type Urgency = "light" | "asap" | "turbo";
 
 export type HomeTaskItem = {
   id: string;
   title: string;
   description?: string | null;
-  delegation?: string | null; // Slack ID de quem delegou
-  term?: Date | string | null; // prazo
+  delegation?: string | null;
+  term?: Date | string | null;
   urgency: Urgency;
 };
 
-const ZERO_WIDTH = "\u200B"; // Slack exige text em checkbox; isso deixa “sem label” na UI
+// action_id do checkbox (tem que bater com o interactive.ts)
+export const TASK_SELECT_ACTION_ID = "task_select" as const;
+
+// action_id do botão concluir
+export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -48,21 +38,22 @@ function taskTitleLine(t: HomeTaskItem) {
   return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
 }
 
-/**
- * Cada task: título + checkbox (só seleção, sem texto)
- */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
     {
       type: "section",
       text: { type: "mrkdwn", text: taskTitleLine(t) },
+
+      // ✅ checkbox ao lado esquerdo (accessory)
+      // Observação: Slack exige "text" em options.
+      // Pra ficar “sem texto”, usamos um ponto invisível/leve.
       accessory: {
         type: "checkboxes",
         action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "mrkdwn", text: ZERO_WIDTH },
-            value: t.id, // <-- aqui vai o ID da task selecionada
+            text: { type: "plain_text", text: " " }, // fica visualmente “vazio”
+            value: t.id,
           },
         ],
       },
@@ -92,65 +83,13 @@ function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
   return blocks.concat(tasks.flatMap(renderTaskItem));
 }
 
-/**
- * Bloco de botões que atuam nas SELECIONADAS
- */
-function bulkActionsBlocks(): AnyBlock[] {
-  return [
-    { type: "divider" },
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: { type: "plain_text", text: "✅ Concluir selecionadas" },
-          style: "primary",
-          action_id: HOME_BULK_COMPLETE,
-          value: "complete",
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "❓ Enviar dúvida" },
-          action_id: HOME_BULK_HELP,
-          value: "help",
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "📅 Reprogramar Prazo" },
-          action_id: HOME_BULK_RESCHEDULE,
-          value: "reschedule",
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "🔎 Ver detalhes" },
-          action_id: HOME_BULK_DETAILS,
-          value: "details",
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "🔄 Atualizar" },
-          action_id: HOME_REFRESH,
-          value: "refresh",
-        },
-      ],
-    },
-  ];
-}
-
-/**
- * Export principal: somente a parte “lista de tasks” (com ações em lote no final).
- * (A parte dos botões do topo fica no homeHeaderActionsBlocks.ts)
- */
 export function homeTasksBlocks(args: {
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
 }): AnyBlock[] {
   return [
-    {
-      type: "header",
-      text: { type: "plain_text", text: "📌 Suas tarefas (você é responsável)" },
-    },
+    { type: "header", text: { type: "plain_text", text: "📌 Suas tarefas (você é responsável)" } },
 
     ...renderGroup("Hoje", args.tasksToday),
     { type: "divider" },
@@ -159,7 +98,20 @@ export function homeTasksBlocks(args: {
     { type: "divider" },
 
     ...renderGroup("Futuras", args.tasksFuture),
+    { type: "divider" },
 
-    ...bulkActionsBlocks(),
+    // ✅ Botão de ação (age sobre as selecionadas)
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          style: "primary",
+          action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
+          text: { type: "plain_text", text: "✅ Concluir selecionadas" },
+          value: "conclude_selected",
+        },
+      ],
+    },
   ];
 }
