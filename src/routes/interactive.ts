@@ -201,7 +201,11 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               taskTitle: title,
               responsible,
               carbonCopies,
+              description,
+              term: dueDate ?? null,
+              urgency: urgency as any, // ou tipa corretamente se você já tem Urgency
             });
+
             req.log.info({ taskId: task.id }, "[INTERACTIVE] notify ok");
           } catch (e) {
             req.log.error({ e, taskId: task.id }, "[INTERACTIVE] notify failed");

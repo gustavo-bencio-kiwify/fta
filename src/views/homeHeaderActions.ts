@@ -15,7 +15,6 @@ export function homeHeaderActionsBlocks(): AnyBlock[] {
         {
           type: "button",
           text: { type: "plain_text", text: "➕ Criar Tarefa" },
-          style: "primary",
           action_id: HOME_CREATE_TASK_ACTION_ID,
           value: "create_task",
         },
