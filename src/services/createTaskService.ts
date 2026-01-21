@@ -12,13 +12,13 @@ export async function createTaskService(raw: unknown) {
   const data = createTaskSchema.parse(raw);
   const term = normalizeTerm(data.term);
 
-  // ✅ aqui está o fix: nunca mandar null pro banco
+  // ✅ NUNCA deixa null/undefined no banco
   const description = (data.description ?? "").trim();
 
   try {
     const task = await prisma.task.create({
       data: {
-        title: data.title,
+        title: data.title.trim(),
         description, // ✅ sempre string
         delegation: data.delegation,
         responsible: data.responsible,
@@ -39,10 +39,10 @@ export async function createTaskService(raw: unknown) {
       include: { carbonCopies: true },
     });
 
-    console.log("[createTaskService] created task:", task.id);
+    console.log("[createTaskService] created:", task.id);
     return task;
   } catch (err) {
     console.error("[createTaskService] prisma error:", err);
-    throw err; // deixa o interactive registrar também
+    throw err;
   }
 }

@@ -4,9 +4,11 @@ import { homeHeaderActionsBlocks } from "./homeHeaderActions";
 import { homeTasksBlocks, type HomeTaskItem } from "./homeTasksBlocks";
 
 export function homeView(args: {
+  tasksOverdue: HomeTaskItem[];
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
+  tasksNoTerm: HomeTaskItem[];
 }): HomeView {
   return {
     type: "home",

@@ -7,19 +7,19 @@ export type HomeTaskItem = {
   id: string;
   title: string;
   description?: string | null;
-  delegation?: string | null; // slack id de quem delegou
+  delegation?: string | null;
   term?: Date | string | null;
   urgency: Urgency;
 };
 
-export const TASK_TOGGLE_DONE_ACTION_ID = "task_toggle_done" as const;
+// ✅ action ids (importados pelo interactive)
+export const TASK_SELECT_ACTION_ID = "task_select" as const;
 
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
 export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
 export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
 export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
 export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
-export const TASK_SELECT_ACTION_ID = "task_select" as const;
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -42,8 +42,11 @@ function taskTitleLine(t: HomeTaskItem) {
 }
 
 /**
- * Um item: SECTION com checkbox no accessory => fica alinhado (não embaixo)
- * Colocamos o taskId no "value" da opção do checkbox.
+ * ✅ SECTION com accessory checkboxes => checkbox alinhado à direita do texto.
+ * Slack não permite checkbox à esquerda do texto (como em algumas UIs do print),
+ * mas isso é o mais “alinhado” possível na Home.
+ *
+ * ✅ Sem texto no checkbox: usamos um espaço.
  */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
@@ -52,10 +55,10 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
       text: { type: "mrkdwn", text: taskTitleLine(t) },
       accessory: {
         type: "checkboxes",
-        action_id: "task_toggle_done",
+        action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "plain_text", text: " " }, // não mostra label
+            text: { type: "plain_text", text: " " },
             value: t.id,
           },
         ],
@@ -63,10 +66,11 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
     },
   ];
 
-  if (t.description) {
+  const desc = (t.description ?? "").trim();
+  if (desc) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: t.description }],
+      elements: [{ type: "mrkdwn", text: desc }],
     });
   }
 
@@ -87,12 +91,17 @@ function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
 }
 
 export function homeTasksBlocks(args: {
+  tasksOverdue: HomeTaskItem[];
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
+  tasksNoTerm: HomeTaskItem[];
 }): AnyBlock[] {
   return [
     { type: "header", text: { type: "plain_text", text: "📌 Suas tarefas (você é responsável)" } },
+
+    ...renderGroup("Atrasadas", args.tasksOverdue),
+    { type: "divider" },
 
     ...renderGroup("Hoje", args.tasksToday),
     { type: "divider" },
@@ -101,10 +110,12 @@ export function homeTasksBlocks(args: {
     { type: "divider" },
 
     ...renderGroup("Futuras", args.tasksFuture),
-
     { type: "divider" },
 
-    // Botões do rodapé (voltam como no print)
+    ...renderGroup("Sem prazo", args.tasksNoTerm),
+    { type: "divider" },
+
+    // ✅ Botões do rodapé (como você queria)
     {
       type: "actions",
       elements: [

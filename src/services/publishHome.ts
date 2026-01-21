@@ -1,3 +1,4 @@
+// src/services/publishHome.ts
 import type { WebClient } from "@slack/web-api";
 import { prisma } from "../lib/prisma";
 import { homeView } from "../views/homeView";
@@ -17,6 +18,33 @@ function endOfDay(d: Date) {
 function normalizeUrgency(u: unknown): Urgency {
   if (u === "light" || u === "asap" || u === "turbo") return u;
   return "light";
+}
+
+function isEpoch1970(d: Date) {
+  // alguns fluxos acabam gravando 1970 quando vem vazio
+  // aqui tratamos como "sem prazo"
+  return d.getTime() === 0;
+}
+
+function toHomeTaskItem(t: {
+  id: string;
+  title: string;
+  description: string | null;
+  delegation: string;
+  term: Date | null;
+  urgency: unknown;
+}): HomeTaskItem {
+  const term =
+    t.term && !Number.isNaN(t.term.getTime()) && !isEpoch1970(t.term) ? t.term : null;
+
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    delegation: t.delegation,
+    term,
+    urgency: normalizeUrgency(t.urgency),
+  };
 }
 
 export async function publishHome(slack: WebClient, userId: string) {
@@ -42,25 +70,37 @@ export async function publishHome(slack: WebClient, userId: string) {
     },
   });
 
-  const tasks: HomeTaskItem[] = rawTasks.map((t) => ({
-    id: t.id,
-    title: t.title,
-    description: t.description,
-    delegation: t.delegation,
-    term: t.term,
-    urgency: normalizeUrgency(t.urgency),
-  }));
+  const tasks = rawTasks.map(toHomeTaskItem);
+
+  const tasksNoTerm = tasks.filter((t) => !t.term);
+
+  const tasksOverdue = tasks.filter(
+    (t) => t.term && new Date(t.term) < todayStart
+  );
 
   const tasksToday = tasks.filter(
     (t) => t.term && new Date(t.term) >= todayStart && new Date(t.term) <= todayEnd
   );
+
   const tasksTomorrow = tasks.filter(
-    (t) => t.term && new Date(t.term) >= tomorrowStart && new Date(t.term) <= tomorrowEnd
+    (t) =>
+      t.term &&
+      new Date(t.term) >= tomorrowStart &&
+      new Date(t.term) <= tomorrowEnd
   );
-  const tasksFuture = tasks.filter((t) => t.term && new Date(t.term) > tomorrowEnd);
+
+  const tasksFuture = tasks.filter(
+    (t) => t.term && new Date(t.term) > tomorrowEnd
+  );
 
   await slack.views.publish({
     user_id: userId,
-    view: homeView({ tasksToday, tasksTomorrow, tasksFuture }),
+    view: homeView({
+      tasksOverdue,
+      tasksToday,
+      tasksTomorrow,
+      tasksFuture,
+      tasksNoTerm,
+    }),
   });
 }
