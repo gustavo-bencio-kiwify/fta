@@ -12,9 +12,10 @@ export type HomeTaskItem = {
   urgency: Urgency;
 };
 
-// ✅ action ids (importados pelo interactive)
+// checkbox (seleção)
 export const TASK_SELECT_ACTION_ID = "task_select" as const;
 
+// botões
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
 export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
 export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
@@ -41,13 +42,6 @@ function taskTitleLine(t: HomeTaskItem) {
   return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
 }
 
-/**
- * ✅ SECTION com accessory checkboxes => checkbox alinhado à direita do texto.
- * Slack não permite checkbox à esquerda do texto (como em algumas UIs do print),
- * mas isso é o mais “alinhado” possível na Home.
- *
- * ✅ Sem texto no checkbox: usamos um espaço.
- */
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
     {
@@ -58,7 +52,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
         action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "plain_text", text: " " },
+            text: { type: "plain_text", text: " " }, // não exibe label
             value: t.id,
           },
         ],
@@ -66,11 +60,10 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
     },
   ];
 
-  const desc = (t.description ?? "").trim();
-  if (desc) {
+  if (t.description) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: desc }],
+      elements: [{ type: "mrkdwn", text: t.description }],
     });
   }
 
@@ -95,7 +88,6 @@ export function homeTasksBlocks(args: {
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
-  tasksNoTerm: HomeTaskItem[];
 }): AnyBlock[] {
   return [
     { type: "header", text: { type: "plain_text", text: "📌 Suas tarefas (você é responsável)" } },
@@ -112,10 +104,7 @@ export function homeTasksBlocks(args: {
     ...renderGroup("Futuras", args.tasksFuture),
     { type: "divider" },
 
-    ...renderGroup("Sem prazo", args.tasksNoTerm),
-    { type: "divider" },
-
-    // ✅ Botões do rodapé (como você queria)
+    // Botões do rodapé
     {
       type: "actions",
       elements: [

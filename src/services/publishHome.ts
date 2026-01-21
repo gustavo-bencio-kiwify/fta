@@ -20,10 +20,12 @@ function normalizeUrgency(u: unknown): Urgency {
   return "light";
 }
 
-function isEpoch1970(d: Date) {
-  // alguns fluxos acabam gravando 1970 quando vem vazio
-  // aqui tratamos como "sem prazo"
-  return d.getTime() === 0;
+// ✅ NÃO trate 1970 como sem prazo.
+// Apenas valida se é uma Date real.
+function normalizeDbTerm(term: Date | null): Date | null {
+  if (!term) return null;
+  if (Number.isNaN(term.getTime())) return null;
+  return term;
 }
 
 function toHomeTaskItem(t: {
@@ -34,21 +36,19 @@ function toHomeTaskItem(t: {
   term: Date | null;
   urgency: unknown;
 }): HomeTaskItem {
-  const term =
-    t.term && !Number.isNaN(t.term.getTime()) && !isEpoch1970(t.term) ? t.term : null;
-
   return {
     id: t.id,
     title: t.title,
     description: t.description,
     delegation: t.delegation,
-    term,
+    term: normalizeDbTerm(t.term),
     urgency: normalizeUrgency(t.urgency),
   };
 }
 
 export async function publishHome(slack: WebClient, userId: string) {
   const now = new Date();
+
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
@@ -72,26 +72,16 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasks = rawTasks.map(toHomeTaskItem);
 
-  const tasksNoTerm = tasks.filter((t) => !t.term);
+  // ✅ só considera tarefas com term válido (Date)
+  const withTerm = tasks.filter((t) => t.term instanceof Date && !Number.isNaN(t.term.getTime()));
 
-  const tasksOverdue = tasks.filter(
-    (t) => t.term && new Date(t.term) < todayStart
-  );
+  const tasksOverdue = withTerm.filter((t) => t.term! < todayStart);
 
-  const tasksToday = tasks.filter(
-    (t) => t.term && new Date(t.term) >= todayStart && new Date(t.term) <= todayEnd
-  );
+  const tasksToday = withTerm.filter((t) => t.term! >= todayStart && t.term! <= todayEnd);
 
-  const tasksTomorrow = tasks.filter(
-    (t) =>
-      t.term &&
-      new Date(t.term) >= tomorrowStart &&
-      new Date(t.term) <= tomorrowEnd
-  );
+  const tasksTomorrow = withTerm.filter((t) => t.term! >= tomorrowStart && t.term! <= tomorrowEnd);
 
-  const tasksFuture = tasks.filter(
-    (t) => t.term && new Date(t.term) > tomorrowEnd
-  );
+  const tasksFuture = withTerm.filter((t) => t.term! > tomorrowEnd);
 
   await slack.views.publish({
     user_id: userId,
@@ -100,7 +90,6 @@ export async function publishHome(slack: WebClient, userId: string) {
       tasksToday,
       tasksTomorrow,
       tasksFuture,
-      tasksNoTerm,
     }),
   });
 }

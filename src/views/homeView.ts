@@ -8,13 +8,9 @@ export function homeView(args: {
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
-  tasksNoTerm: HomeTaskItem[];
 }): HomeView {
   return {
     type: "home",
-    blocks: [
-      ...homeHeaderActionsBlocks(),
-      ...homeTasksBlocks(args),
-    ],
+    blocks: [...homeHeaderActionsBlocks(), ...homeTasksBlocks(args)],
   };
 }
