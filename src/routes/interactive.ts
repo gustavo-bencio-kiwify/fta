@@ -276,10 +276,14 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               slack,
               taskId: task.id,
               createdBy: userId,
-              taskTitle: title,
-              responsible,
-              carbonCopies,
+              taskTitle: task.title,          
+              responsible: task.responsible,  
+              carbonCopies,                   
+              description: task.description,  
+              term: task.term,                
+              urgency: task.urgency,          
             });
+
 
             // 3) atualiza homes
             await publishHome(slack, userId);

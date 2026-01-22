@@ -8,8 +8,6 @@ export type NotifyTaskCreatedArgs = {
   taskTitle: string;
   responsible: string;
   carbonCopies: string[];
-
-  // opcionais (se você quiser preencher melhor a notificação)
   description?: string | null;
   term?: Date | string | null;
   urgency?: "light" | "asap" | "turbo";
