@@ -1,3 +1,4 @@
+// src/slack/views/homeTasksBlocks.ts
 import type { AnyBlock } from "@slack/web-api";
 
 export type Urgency = "light" | "asap" | "turbo";
@@ -32,24 +33,40 @@ function formatDateBR(d?: Date | string | null) {
   return dt.toLocaleDateString("pt-BR");
 }
 
-function taskTitleLine(t: HomeTaskItem) {
+function taskMainLine(t: HomeTaskItem) {
+  // ✅ mantém o “visual” do título (emoji + bold)
+  return `${urgencyEmoji(t.urgency)} *${t.title}*`;
+}
+
+function taskMetaLine(t: HomeTaskItem) {
+  // ✅ mantém os caracteres “(vence xx) — delegado por @...”
   const due = formatDateBR(t.term);
-  const dueText = due ? ` (vence ${due})` : "";
-  const delegatedText = t.delegation ? ` — delegado por <@${t.delegation}>` : "";
-  return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
+  const dueText = due ? `(vence ${due})` : null;
+  const delegatedText = t.delegation ? `— delegado por <@${t.delegation}>` : null;
+
+  const parts = [dueText, delegatedText].filter(Boolean);
+  if (!parts.length) return null;
+
+  // deixa levemente “comentário” como no seu print anterior
+  return `_${parts.join(" ")}_`;
 }
 
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
+  const meta = taskMetaLine(t);
+
   const blocks: AnyBlock[] = [
     {
       type: "section",
-      text: { type: "mrkdwn", text: taskTitleLine(t) },
+      // ✅ block_id fixo por task (ajuda a evitar comportamento estranho e facilita debug)
+      block_id: `task_${t.id}`,
+      text: { type: "mrkdwn", text: taskMainLine(t) },
       accessory: {
         type: "checkboxes",
         action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "plain_text", text: " " }, 
+            // Slack exige texto; usamos espaço pra não “escrever nada”
+            text: { type: "plain_text", text: " " },
             value: t.id,
           },
         ],
@@ -57,10 +74,19 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
     },
   ];
 
-  if (t.description) {
+  // ✅ Prazo / delegado embaixo (sem quebrar o checkbox)
+  if (meta) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: t.description }],
+      elements: [{ type: "mrkdwn", text: meta }],
+    });
+  }
+
+  // ✅ Descrição embaixo, se existir
+  if (t.description?.trim()) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: t.description.trim() }],
     });
   }
 
