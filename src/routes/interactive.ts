@@ -2,11 +2,7 @@
 import type { FastifyInstance } from "fastify";
 import type { WebClient } from "@slack/web-api";
 import formbody from "@fastify/formbody";
-
-import { prisma } from "../lib/prisma";
-import { publishHome } from "../services/publishHome";
-import { createTaskService } from "../services/createTaskService";
-import { notifyTaskCreated, TASK_DETAILS_CONCLUDE_ACTION_ID } from "../services/notifyTaskCreated";
+import { TASK_DETAILS_CONCLUDE_ACTION_ID } from "../services/notifyTaskCreated";
 
 import {
   HOME_CREATE_TASK_ACTION_ID,
@@ -28,14 +24,21 @@ import {
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
 import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID } from "../views/createProjectModal";
 
+import { createTaskService } from "../services/createTaskService";
+import { notifyTaskCreated } from "../services/notifyTaskCreated";
+import { publishHome } from "../services/publishHome";
+import { prisma } from "../lib/prisma";
+
+// ✅ NOVO: action_ids da Home (rodapé + checkbox)
 import {
   TASK_SELECT_ACTION_ID,
   TASKS_CONCLUDE_SELECTED_ACTION_ID,
-  TASKS_REFRESH_ACTION_ID,
   TASKS_SEND_QUESTION_ACTION_ID,
-  TASKS_RESCHEDULE_ACTION_ID,
-  TASKS_VIEW_DETAILS_ACTION_ID,
+  TASKS_REFRESH_ACTION_ID,
 } from "../views/homeTasksBlocks";
+
+// ✅ NOVO: abre thread (MPIM) com todos envolvidos
+import { openQuestionThread } from "../services/openQuestionThread";
 
 type SlackPayload = any;
 
@@ -62,8 +65,7 @@ function getSelectedDate(values: any, blockId: string, actionId: string): string
   return values?.[blockId]?.[actionId]?.selected_date; // "YYYY-MM-DD"
 }
 function getSelectedTime(values: any, blockId: string, actionId: string): string | undefined {
-  // Slack "timepicker" costuma vir como selected_time = "HH:MM"
-  return values?.[blockId]?.[actionId]?.selected_time;
+  return values?.[blockId]?.[actionId]?.selected_time; // "HH:MM"
 }
 function getSelectedOptionValue(values: any, blockId: string, actionId: string): string | undefined {
   return values?.[blockId]?.[actionId]?.selected_option?.value;
@@ -72,32 +74,31 @@ function getSelectedUsers(values: any, blockId: string, actionId: string): strin
   return values?.[blockId]?.[actionId]?.selected_users ?? [];
 }
 
-/**
- * Lê TODOS os ids selecionados pelos checkboxes na Home.
- * Isso depende do action_id do checkbox ser exatamente TASK_SELECT_ACTION_ID.
- */
+// ✅ NOVO: pega TODAS taskIds selecionadas na Home via view.state.values
 function getSelectedTaskIdsFromHome(payload: any): string[] {
   const stateValues = payload?.view?.state?.values;
   if (!stateValues) return [];
 
   const ids: string[] = [];
-
   for (const block of Object.values(stateValues)) {
     const action = (block as any)?.[TASK_SELECT_ACTION_ID];
     const selected = action?.selected_options as Array<{ value: string }> | undefined;
-
     if (selected?.length) {
       for (const opt of selected) ids.push(opt.value);
     }
   }
-
   return Array.from(new Set(ids));
+}
+
+function isUuid(v: unknown) {
+  return typeof v === "string" && /^[0-9a-fA-F-]{36}$/.test(v);
 }
 
 export async function interactive(app: FastifyInstance, slack: WebClient) {
   app.register(formbody);
 
   app.post("/interactive", async (req, reply) => {
+    // Slack precisa sempre 200 rápido
     try {
       req.log.info("[INTERACTIVE] HIT");
 
@@ -140,7 +141,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
       }
 
       // =========================================================
-      // 1) BLOCK ACTIONS (botões / checkboxes)
+      // 1) BLOCK ACTIONS (botões)
       // =========================================================
       if (payload.type === "block_actions") {
         const action = payload.actions?.[0];
@@ -148,7 +149,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
         req.log.info({ actionId, userId }, "[INTERACTIVE] block_actions");
 
-        // --------- Botões do topo da Home
+        // ======= (mantém) Botões da Home (topo)
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
           await slack.views.open({
             trigger_id: payload.trigger_id,
@@ -173,12 +174,18 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return reply.status(200).send();
         }
 
-        // --------- Checkbox na Home: só seleciona (ACK)
+        // ======= ✅ NOVO: Checkbox sozinho (só seleciona, não faz nada)
         if (actionId === TASK_SELECT_ACTION_ID) {
           return reply.status(200).send();
         }
 
-        // --------- Botão: Concluir selecionadas (Home)
+        // ======= ✅ NOVO: Refresh
+        if (actionId === TASKS_REFRESH_ACTION_ID) {
+          if (userId) await publishHome(slack, userId);
+          return reply.status(200).send();
+        }
+
+        // ======= ✅ NOVO: Concluir selecionadas (muda status => done)
         if (actionId === TASKS_CONCLUDE_SELECTED_ACTION_ID) {
           if (!userId) return reply.status(200).send();
 
@@ -190,7 +197,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               where: {
                 id: { in: selectedIds },
                 responsible: userId,
-                status: { not: "done" },
+                status: "pending",
               },
               data: { status: "done" },
             });
@@ -200,41 +207,54 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return reply.status(200).send();
         }
 
-        // --------- Botão: Refresh (Home)
-        if (actionId === TASKS_REFRESH_ACTION_ID) {
-          if (userId) await publishHome(slack, userId);
-          return reply.status(200).send();
-        }
-
-        // --------- Botão: Concluir (na mensagem de notificação)
+        // ======= ✅ NOVO: Concluir na mensagem (action_id vindo do notify)
         if (actionId === TASK_DETAILS_CONCLUDE_ACTION_ID) {
-          const taskId = (action?.value as string | undefined) ?? undefined;
+          if (!userId) return reply.status(200).send();
 
-          req.log.info({ taskId, userId }, "[INTERACTIVE] conclude from message");
-
-          if (taskId && userId) {
+          const taskId = action?.value as string | undefined;
+          if (taskId && isUuid(taskId)) {
             await prisma.task.updateMany({
-              where: { id: taskId, responsible: userId, status: { not: "done" } },
+              where: {
+                id: taskId,
+                responsible: userId,
+                status: "pending",
+              },
               data: { status: "done" },
             });
-
             await publishHome(slack, userId);
           }
 
           return reply.status(200).send();
         }
 
-        // --------- Stubs (sem função por enquanto, mas ACK)
+        // ======= ✅ NOVO: Enviar dúvida
+        // - Se vier da mensagem: action.value = taskId
+        // - Se vier da Home: usa selecionadas
         if (actionId === TASKS_SEND_QUESTION_ACTION_ID) {
-          // depois você implementa DM com envolvidos etc
-          return reply.status(200).send();
-        }
+          if (!userId) return reply.status(200).send();
 
-        if (actionId === TASKS_RESCHEDULE_ACTION_ID) {
-          return reply.status(200).send();
-        }
+          const value = action?.value as string | undefined;
 
-        if (actionId === TASKS_VIEW_DETAILS_ACTION_ID) {
+          const taskIds = value && isUuid(value)
+            ? [value]
+            : getSelectedTaskIdsFromHome(payload);
+
+          req.log.info({ taskIds, fromValue: value }, "[INTERACTIVE] send_question");
+
+          if (!taskIds.length) return reply.status(200).send();
+
+          for (const taskId of taskIds) {
+            try {
+              await openQuestionThread({
+                slack,
+                taskId,
+                requestedBy: userId,
+              });
+            } catch (e) {
+              req.log.error({ e, taskId }, "[INTERACTIVE] openQuestionThread failed");
+            }
+          }
+
           return reply.status(200).send();
         }
 
@@ -264,11 +284,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const dueDate = getSelectedDate(values, "due_block", "due_date"); // YYYY-MM-DD
           const deadlineTime = getSelectedTime(values, TASK_TIME_BLOCK_ID, TASK_TIME_ACTION_ID); // HH:MM
 
-          const recurrence = getSelectedOptionValue(
-            values,
-            TASK_RECURRENCE_BLOCK_ID,
-            TASK_RECURRENCE_ACTION_ID
-          ); // daily..annual
+          const recurrence = getSelectedOptionValue(values, TASK_RECURRENCE_BLOCK_ID, TASK_RECURRENCE_ACTION_ID); // daily..annual
           const projectId = getSelectedOptionValue(values, TASK_PROJECT_BLOCK_ID, TASK_PROJECT_ACTION_ID); // uuid
 
           const urgency = getSelectedOptionValue(values, "urgency_block", "urgency") ?? "light";
