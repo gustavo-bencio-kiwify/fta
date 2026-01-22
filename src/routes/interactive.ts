@@ -24,6 +24,8 @@ import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendB
 import { createProjectModalView, CREATE_PROJECT_MODAL_CALLBACK_ID } from "../views/createProjectModal";
 
 import { createTaskService } from "../services/createTaskService";
+import { notifyTaskCreated } from "../services/notifyTaskCreated";
+import { publishHome } from "../services/publishHome";
 import { prisma } from "../lib/prisma";
 
 type SlackPayload = any;
@@ -64,19 +66,24 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
   app.register(formbody);
 
   app.post("/interactive", async (req, reply) => {
+    // Slack precisa sempre 200 rápido
     try {
+      req.log.info("[INTERACTIVE] HIT");
+
       const payload = parseSlackPayload(req.body);
-      if (!payload) return reply.status(200).send();
+      if (!payload) {
+        req.log.warn({ body: req.body }, "[INTERACTIVE] invalid payload");
+        return reply.status(200).send();
+      }
 
       const userId = payload.user?.id as string | undefined;
 
-      // =========================
+      // =========================================================
       // 0) BLOCK SUGGESTION (external_select: projetos)
-      // =========================
+      // =========================================================
       if (payload.type === "block_suggestion") {
         const query = (payload.value ?? "").toString().trim();
 
-        // o action_id pode vir em payload.action_id (Slack) ou em payload.actions[0]
         const actionId =
           payload.action_id ??
           payload.action?.action_id ??
@@ -87,9 +94,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         }
 
         const projects = await prisma.project.findMany({
-          where: query
-            ? { name: { contains: query, mode: "insensitive" } }
-            : undefined,
+          where: query ? { name: { contains: query, mode: "insensitive" } } : undefined,
           orderBy: { createdAt: "desc" },
           take: 50,
           select: { id: true, name: true },
@@ -98,17 +103,19 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         return reply.status(200).send({
           options: projects.map((p) => ({
             text: { type: "plain_text", text: p.name },
-            value: p.id, // ✅ projectId
+            value: p.id,
           })),
         });
       }
 
-      // =========================
+      // =========================================================
       // 1) BLOCK ACTIONS (botões)
-      // =========================
+      // =========================================================
       if (payload.type === "block_actions") {
         const action = payload.actions?.[0];
         const actionId = action?.action_id as string | undefined;
+
+        req.log.info({ actionId, userId }, "[INTERACTIVE] block_actions");
 
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
           await slack.views.open({
@@ -137,12 +144,16 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         return reply.status(200).send();
       }
 
-      // =========================
+      // =========================================================
       // 2) VIEW SUBMISSION (submit do modal)
-      // =========================
+      // =========================================================
       if (payload.type === "view_submission") {
         const cb = payload.view?.callback_id as string | undefined;
+        req.log.info({ cb, userId }, "[INTERACTIVE] view_submission");
 
+        // -------------------------
+        // CREATE TASK
+        // -------------------------
         if (cb === CREATE_TASK_MODAL_CALLBACK_ID) {
           const values = payload.view.state.values;
 
@@ -153,20 +164,35 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           const responsible = getSelectedUser(values, "resp_block", "responsible") ?? "";
 
-          const dueDate = getSelectedDate(values, "due_block", "due_date"); // YYYY-MM-DD | undefined
-          const deadlineTime = getSelectedTime(values, TASK_TIME_BLOCK_ID, TASK_TIME_ACTION_ID); // HH:MM | undefined
+          const dueDate = getSelectedDate(values, "due_block", "due_date"); // YYYY-MM-DD
+          const deadlineTime = getSelectedTime(values, TASK_TIME_BLOCK_ID, TASK_TIME_ACTION_ID); // HH:MM
 
-          const recurrence = getSelectedOptionValue(values, TASK_RECURRENCE_BLOCK_ID, TASK_RECURRENCE_ACTION_ID); // daily.. | undefined
-          const projectId = getSelectedOptionValue(values, TASK_PROJECT_BLOCK_ID, TASK_PROJECT_ACTION_ID); // uuid | undefined
+          const recurrence = getSelectedOptionValue(values, TASK_RECURRENCE_BLOCK_ID, TASK_RECURRENCE_ACTION_ID); // daily..annual
+          const projectId = getSelectedOptionValue(values, TASK_PROJECT_BLOCK_ID, TASK_PROJECT_ACTION_ID); // uuid
 
           const urgency = getSelectedOptionValue(values, "urgency_block", "urgency") ?? "light";
-
           const carbonCopies = getSelectedUsers(values, "cc_block", "carbon_copies");
 
           if (!userId) return reply.send({});
           if (!title || !responsible) return reply.send({});
 
-          await createTaskService({
+          req.log.info(
+            {
+              title,
+              responsible,
+              dueDate,
+              deadlineTime,
+              recurrence,
+              projectId,
+              urgency,
+              carbonCopiesCount: carbonCopies.length,
+              hasDesc: !!description,
+            },
+            "[INTERACTIVE] create_task parsed"
+          );
+
+          // 1) cria no banco
+          const task = await createTaskService({
             title,
             description,
             delegation: userId,
@@ -179,22 +205,48 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             carbonCopies,
           });
 
+          req.log.info({ taskId: task.id }, "[INTERACTIVE] task created");
+
+          // 2) notifica (responsável + CC)
+          try {
+            await notifyTaskCreated({
+              slack,
+              taskId: task.id,
+              createdBy: userId,
+              taskTitle: title,
+              responsible,
+              carbonCopies,
+            });
+            req.log.info({ taskId: task.id }, "[INTERACTIVE] notify ok");
+          } catch (e) {
+            req.log.error({ e, taskId: task.id }, "[INTERACTIVE] notify failed");
+          }
+
+          // 3) atualiza Home (criador e responsável)
+          try {
+            await publishHome(slack, userId);
+            if (responsible && responsible !== userId) {
+              await publishHome(slack, responsible);
+            }
+            req.log.info({ userId, responsible }, "[INTERACTIVE] publishHome ok");
+          } catch (e) {
+            req.log.error({ e }, "[INTERACTIVE] publishHome failed");
+          }
+
           return reply.send({}); // fecha modal
         }
 
-        if (cb === SEND_BATCH_MODAL_CALLBACK_ID) {
-          return reply.send({});
-        }
-
-        if (cb === CREATE_PROJECT_MODAL_CALLBACK_ID) {
-          return reply.send({});
-        }
+        // -------------------------
+        // PLACEHOLDERS
+        // -------------------------
+        if (cb === SEND_BATCH_MODAL_CALLBACK_ID) return reply.send({});
+        if (cb === CREATE_PROJECT_MODAL_CALLBACK_ID) return reply.send({});
 
         return reply.send({});
       }
 
       return reply.status(200).send();
-    } catch (err) {
+    } catch (err: any) {
       req.log.error({ err }, "[INTERACTIVE] error");
       return reply.status(200).send();
     }
