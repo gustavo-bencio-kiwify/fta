@@ -57,32 +57,27 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
   const blocks: AnyBlock[] = [
     {
       type: "section",
-      // ✅ block_id fixo por task (ajuda a evitar comportamento estranho e facilita debug)
       block_id: `task_${t.id}`,
       text: { type: "mrkdwn", text: taskMainLine(t) },
       accessory: {
         type: "checkboxes",
         action_id: TASK_SELECT_ACTION_ID,
         options: [
-          {
-            // Slack exige texto; usamos espaço pra não “escrever nada”
-            text: { type: "plain_text", text: " " },
-            value: t.id,
-          },
+          { text: { type: "plain_text", text: " " }, value: t.id },
         ],
       },
     },
   ];
 
-  // ✅ Prazo / delegado embaixo (sem quebrar o checkbox)
+  // ✅ Prazo/delegado embaixo, mas agora como SECTION (fica grande)
   if (meta) {
     blocks.push({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: meta }],
+      type: "section",
+      text: { type: "mrkdwn", text: meta },
     });
   }
 
-  // ✅ Descrição embaixo, se existir
+  // ✅ Descrição continua como context (pequena)
   if (t.description?.trim()) {
     blocks.push({
       type: "context",
