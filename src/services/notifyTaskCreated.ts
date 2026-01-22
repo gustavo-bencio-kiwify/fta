@@ -66,15 +66,12 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
       // Linha "Delegado por"
       {
         type: "section",
-        text: { type: "mrkdwn", text: `📌 *Delegado por:* <@${createdBy}>` },
+        text: { type: "mrkdwn", 
+          text: 
+          `📌 *Delegado por:* <@${createdBy}>\n`+
+          `🚨 *Urgência:* ${urgencyLabel(urgency)}`
+         },
       },
-
-      // Linha "Urgência"
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: `🚨 *Urgência:* ${urgencyLabel(urgency)}` },
-      },
-
       { type: "divider" },
 
       // Corpo (grande)
@@ -95,7 +92,6 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
         elements: [
           {
             type: "button",
-            style: "primary",
             action_id: TASK_DETAILS_CONCLUDE_ACTION_ID,
             text: { type: "plain_text", text: "✅ Concluir" },
             value: taskId, // <- usado pelo interactive pra deletar
