@@ -22,7 +22,6 @@ app.post("/sendMessage", async (req, reply) => {
       return reply.code(500).send({ ok: false, error: "Could not open DM channel" });
     }
 
-    // 2) envia mensagem no canal (DM)
     const res = await slack.chat.postMessage({
       channel: channelId,
       text,

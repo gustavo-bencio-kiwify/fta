@@ -1,4 +1,3 @@
-// src/slack/views/createTaskModal.ts
 import type { ModalView } from "@slack/web-api";
 
 export const CREATE_TASK_MODAL_CALLBACK_ID = "create_task_modal" as const;

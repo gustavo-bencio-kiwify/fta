@@ -1,4 +1,3 @@
-// src/slack/views/homeTasksBlocks.ts
 import type { AnyBlock } from "@slack/web-api";
 
 export type Urgency = "light" | "asap" | "turbo";
@@ -12,10 +11,8 @@ export type HomeTaskItem = {
   urgency: Urgency;
 };
 
-// checkbox (seleção)
 export const TASK_SELECT_ACTION_ID = "task_select" as const;
 
-// botões
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
 export const TASKS_SEND_QUESTION_ACTION_ID = "tasks_send_question" as const;
 export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
@@ -52,7 +49,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
         action_id: TASK_SELECT_ACTION_ID,
         options: [
           {
-            text: { type: "plain_text", text: " " }, // não exibe label
+            text: { type: "plain_text", text: " " }, 
             value: t.id,
           },
         ],
@@ -104,7 +101,6 @@ export function homeTasksBlocks(args: {
     ...renderGroup("Futuras", args.tasksFuture),
     { type: "divider" },
 
-    // Botões do rodapé
     {
       type: "actions",
       elements: [

@@ -9,6 +9,7 @@ function startOfDay(d: Date) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
 function endOfDay(d: Date) {
   const x = new Date(d);
   x.setHours(23, 59, 59, 999);
@@ -20,11 +21,11 @@ function normalizeUrgency(u: unknown): Urgency {
   return "light";
 }
 
-// ✅ NÃO trate 1970 como sem prazo.
-// Apenas valida se é uma Date real.
+// trata term nulo / inválido / epoch como "sem prazo" (e a gente vai ignorar)
 function normalizeDbTerm(term: Date | null): Date | null {
   if (!term) return null;
   if (Number.isNaN(term.getTime())) return null;
+  if (term.getTime() === 0) return null; // 1970-01-01
   return term;
 }
 
@@ -46,9 +47,12 @@ function toHomeTaskItem(t: {
   };
 }
 
+/**
+ * ✅ Named export (é isso que resolve o import)
+ * import { publishHome } from "../services/publishHome";
+ */
 export async function publishHome(slack: WebClient, userId: string) {
   const now = new Date();
-
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
@@ -57,8 +61,12 @@ export async function publishHome(slack: WebClient, userId: string) {
   const tomorrowStart = startOfDay(tomorrow);
   const tomorrowEnd = endOfDay(tomorrow);
 
+  // 1) busca tasks do usuário (não trazer done)
   const rawTasks = await prisma.task.findMany({
-    where: { responsible: userId },
+    where: {
+      responsible: userId,
+      NOT: { status: "done" }, // ✅ concluídas não aparecem
+    },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: {
       id: true,
@@ -67,22 +75,28 @@ export async function publishHome(slack: WebClient, userId: string) {
       term: true,
       urgency: true,
       delegation: true,
+      status: true, // pode existir no seu model novo
     },
   });
 
   const tasks = rawTasks.map(toHomeTaskItem);
 
-  // ✅ só considera tarefas com term válido (Date)
-  const withTerm = tasks.filter((t) => t.term instanceof Date && !Number.isNaN(t.term.getTime()));
+  // ✅ sem prazo NÃO aparece em nenhum grupo (como você pediu)
+  const withTerm = tasks.filter((t) => !!t.term);
 
-  const tasksOverdue = withTerm.filter((t) => t.term! < todayStart);
+  const tasksOverdue = withTerm.filter((t) => new Date(t.term!) < todayStart);
 
-  const tasksToday = withTerm.filter((t) => t.term! >= todayStart && t.term! <= todayEnd);
+  const tasksToday = withTerm.filter(
+    (t) => new Date(t.term!) >= todayStart && new Date(t.term!) <= todayEnd
+  );
 
-  const tasksTomorrow = withTerm.filter((t) => t.term! >= tomorrowStart && t.term! <= tomorrowEnd);
+  const tasksTomorrow = withTerm.filter(
+    (t) => new Date(t.term!) >= tomorrowStart && new Date(t.term!) <= tomorrowEnd
+  );
 
-  const tasksFuture = withTerm.filter((t) => t.term! > tomorrowEnd);
+  const tasksFuture = withTerm.filter((t) => new Date(t.term!) > tomorrowEnd);
 
+  // 2) publica home
   await slack.views.publish({
     user_id: userId,
     view: homeView({
@@ -90,6 +104,6 @@ export async function publishHome(slack: WebClient, userId: string) {
       tasksToday,
       tasksTomorrow,
       tasksFuture,
-    }),
+    } as any), // se seu homeView ainda não tiver overdue, me avisa que eu ajusto certinho
   });
 }
