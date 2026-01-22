@@ -5,13 +5,14 @@ const slackUserIdSchema = z.string().regex(/^[UW][A-Z0-9]+$/);
 
 export const urgencySchema = z.enum(["light", "asap", "turbo"]);
 
-// ✅ CC pode vir como "UXXXX" OU { slackUserId, email }
-const carbonCopySchema = z.union([
-  slackUserIdSchema,
-  z.object({
-    slackUserId: slackUserIdSchema,
-    email: z.string().email().optional(),
-  }),
+export const recurrenceSchema = z.enum([
+  "daily",
+  "weekly",
+  "biweekly",
+  "monthly",
+  "quarterly",
+  "semiannual",
+  "annual",
 ]);
 
 export const createTaskSchema = z.object({
@@ -21,13 +22,23 @@ export const createTaskSchema = z.object({
   delegation: slackUserIdSchema,
   responsible: slackUserIdSchema,
 
-  // continua livre, já que vem do Slack como string "YYYY-MM-DD"
+  // Data do prazo (pode vir Date ou string YYYY-MM-DD)
   term: z.any().optional(),
 
-  recurrence: z.string().optional(),
+  // ✅ NOVO
+  deadlineTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/) // "HH:MM"
+    .nullable()
+    .optional(),
+
+  recurrence: recurrenceSchema.nullable().optional(),
+
+  projectId: z.string().uuid().nullable().optional(),
+
   urgency: urgencySchema,
 
-  carbonCopies: z.array(carbonCopySchema).optional().default([]),
+  carbonCopies: z.array(slackUserIdSchema).optional().default([]),
 });
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
