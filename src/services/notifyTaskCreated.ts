@@ -1,45 +1,43 @@
 // src/services/notifyTaskCreated.ts
-import type { WebClient } from "@slack/web-api";
-
-export type Urgency = "light" | "asap" | "turbo";
+import type { WebClient, KnownBlock } from "@slack/web-api";
 
 export type NotifyTaskCreatedArgs = {
   slack: WebClient;
   taskId: string;
   createdBy: string;
   taskTitle: string;
-
   responsible: string;
   carbonCopies: string[];
 
-  // para ficar igual ao print:
+  // opcionais (se você quiser preencher melhor a notificação)
   description?: string | null;
-  term?: Date | string | null; // prazo
-  urgency?: Urgency;
+  term?: Date | string | null;
+  urgency?: "light" | "asap" | "turbo";
 };
 
+// action_ids dos botões do DM (TEM que bater com o interactive.ts)
+const TASK_DETAILS_CONCLUDE_ACTION_ID = "task_details_conclude" as const;
+const TASK_DETAILS_QUESTION_ACTION_ID = "task_details_question" as const;
+
 async function openDm(slack: WebClient, userId: string) {
-  const conv = await slack.conversations.open({ users: userId, return_im: true });
+  const conv = await slack.conversations.open({ users: userId });
   const channelId = conv.channel?.id;
-  if (!channelId) throw new Error(`Could not open DM channel for userId=${userId}`);
+  if (!channelId) throw new Error("Could not open DM channel");
   return channelId;
 }
 
-function urgencyLabel(u: Urgency) {
-  if (u === "light") return "🟢 Light";
+function urgencyLabel(u?: "light" | "asap" | "turbo") {
   if (u === "asap") return "🟡 ASAP";
-  return "🔴 Turbo";
+  if (u === "turbo") return "🔴 Turbo";
+  return "🟢 Light";
 }
 
-function formatDateBR(d?: Date | string | null) {
-  if (!d) return "—";
-  const dt = typeof d === "string" ? new Date(d) : d;
+function formatPrazoBR(term?: Date | string | null) {
+  if (!term) return "—";
+  const dt = typeof term === "string" ? new Date(term) : term;
   if (Number.isNaN(dt.getTime())) return "—";
+  // você pode trocar por dd/MM se preferir
   return dt.toLocaleDateString("pt-BR");
-}
-
-function slackErrDetails(e: any) {
-  return { message: e?.message, code: e?.code, data: e?.data };
 }
 
 export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
@@ -52,95 +50,82 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
     carbonCopies,
     description,
     term,
-    urgency = "light",
+    urgency,
   } = args;
 
   const ccUnique = Array.from(new Set(carbonCopies ?? [])).filter((id) => id !== responsible);
 
-  // =========
-  // 1) DM pro responsável (igual ao print)
-  // =========
+  // ✅ você pediu para notificar você mesmo também → não bloqueia mais
+  // (ou seja, sempre notifica o responsável, mesmo se createdBy === responsible)
+
+  // ===== 1) Mensagem pro responsável (layout grande) =====
   try {
     const channelId = await openDm(slack, responsible);
 
-    const prazo = formatDateBR(term);
-    const desc = description?.trim() ? description.trim() : "—";
+    const blocks: KnownBlock[] = [
+      // Linha "Delegado por"
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `📌 *Delegado por:* <@${createdBy}>` },
+      },
+
+      // Linha "Urgência"
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `🚨 *Urgência:* ${urgencyLabel(urgency)}` },
+      },
+
+      { type: "divider" },
+
+      // Corpo (grande)
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `*Nome da tarefa:* ${taskTitle}\n` +
+            `*Descrição:* ${description?.trim() ? description.trim() : "—"}\n` +
+            `*Prazo:* ${formatPrazoBR(term)}`,
+        },
+      },
+
+      // Botões
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            style: "primary",
+            action_id: TASK_DETAILS_CONCLUDE_ACTION_ID,
+            text: { type: "plain_text", text: "✅ Concluir" },
+            value: taskId, // <- usado pelo interactive pra deletar
+          },
+          {
+            type: "button",
+            action_id: TASK_DETAILS_QUESTION_ACTION_ID,
+            text: { type: "plain_text", text: "❓ Enviar dúvida" },
+            value: taskId,
+          },
+        ],
+      },
+
+      // UID (grande). Se quiser pequeno, troque por context.
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `UID: \`${taskId}\`` },
+      },
+    ];
 
     await slack.chat.postMessage({
       channel: channelId,
-
-      // fallback
-      text: `📌 Delegado por <@${createdBy}> • Urgência: ${urgencyLabel(urgency)} • ${taskTitle} (Prazo: ${prazo})`,
-
-      blocks: [
-        // "Finance Tasks" (no Slack aparece como header grande)
-        { type: "header", text: { type: "plain_text", text: "Finance Tasks" } },
-
-        // Delegado por
-        {
-          type: "context",
-          elements: [{ type: "mrkdwn", text: `📌 *Delegado por:* <@${createdBy}>` }],
-        },
-
-        // Urgência
-        {
-          type: "context",
-          elements: [{ type: "mrkdwn", text: `🚨 *Urgência:* ${urgencyLabel(urgency)}` }],
-        },
-
-        { type: "divider" },
-
-        // 2 colunas: Nome da tarefa | Descrição
-        {
-          type: "section",
-          fields: [
-            { type: "mrkdwn", text: `*Nome da tarefa:* ${taskTitle}` },
-            { type: "mrkdwn", text: `*Descrição:* ${desc}` },
-          ],
-        },
-
-        // Prazo
-        { type: "section", text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` } },
-
-        // Botões (mesma ideia do print)
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              style: "primary",
-              text: { type: "plain_text", text: "✅ Concluir" },
-              action_id: "task_details_conclude",
-              value: taskId,
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "❓ Enviar dúvida" },
-              action_id: "task_details_question",
-              value: taskId,
-            },
-          ],
-        },
-
-        // UID embaixo
-        { type: "context", elements: [{ type: "mrkdwn", text: `UID: \`${taskId}\`` }] },
-
-        { type: "divider" },
-      ],
+      text: `<@${createdBy}> atribuiu a atividade "${taskTitle}" para você`,
+      blocks,
     });
-
-    console.log("[notifyTaskCreated] notified responsible", { taskId, responsible });
   } catch (e) {
-    console.error("[notifyTaskCreated] failed to notify responsible", {
-      taskId,
-      responsible,
-      ...slackErrDetails(e),
-    });
+    console.error("[notifyTaskCreated] failed to notify responsible:", e);
   }
 
-  // =========
-  // 2) DM pros CCs (mantém simples como você pediu)
-  // =========
+  // ===== 2) Mensagem pros CCs (mantém simples, como você pediu) =====
   const ccText = `<@${createdBy}> atribuiu a atividade *${taskTitle}* para <@${responsible}> (você está em cópia)`;
 
   await Promise.all(
@@ -148,13 +133,8 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
       try {
         const channelId = await openDm(slack, ccId);
         await slack.chat.postMessage({ channel: channelId, text: ccText });
-        console.log("[notifyTaskCreated] notified CC", { taskId, ccId });
       } catch (e) {
-        console.error("[notifyTaskCreated] failed to notify CC", {
-          taskId,
-          ccId,
-          ...slackErrDetails(e),
-        });
+        console.error(`[notifyTaskCreated] failed to notify CC ${ccId}:`, e);
       }
     })
   );

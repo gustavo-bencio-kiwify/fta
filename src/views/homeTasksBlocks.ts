@@ -110,7 +110,6 @@ export function homeTasksBlocks(args: {
       elements: [
         {
           type: "button",
-          style: "primary",
           text: { type: "plain_text", text: "✅ Concluir selecionadas" },
           action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
           value: "conclude_selected",
