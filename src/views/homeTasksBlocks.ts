@@ -34,26 +34,15 @@ function formatDateBR(d?: Date | string | null) {
 }
 
 function taskMainLine(t: HomeTaskItem) {
-  // ✅ mantém o “visual” do título (emoji + bold)
-  return `${urgencyEmoji(t.urgency)} *${t.title}*`;
-}
-
-function taskMetaLine(t: HomeTaskItem) {
-  // ✅ mantém os caracteres “(vence xx) — delegado por @...”
   const due = formatDateBR(t.term);
-  const dueText = due ? `(vence ${due})` : null;
-  const delegatedText = t.delegation ? `— delegado por <@${t.delegation}>` : null;
+  const dueText = due ? ` (vence ${due})` : "";
+  const delegatedText = t.delegation ? ` — delegado por <@${t.delegation}>` : "";
 
-  const parts = [dueText, delegatedText].filter(Boolean);
-  if (!parts.length) return null;
-
-  // deixa levemente “comentário” como no seu print anterior
-  return `_${parts.join(" ")}_`;
+  // ✅ tudo na mesma linha:
+  return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}`;
 }
 
 function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
-  const meta = taskMetaLine(t);
-
   const blocks: AnyBlock[] = [
     {
       type: "section",
@@ -69,15 +58,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
     },
   ];
 
-  // ✅ Prazo/delegado embaixo, mas agora como SECTION (fica grande)
-  if (meta) {
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: meta },
-    });
-  }
-
-  // ✅ Descrição continua como context (pequena)
+  // ✅ Descrição embaixo, se existir
   if (t.description?.trim()) {
     blocks.push({
       type: "context",
@@ -87,6 +68,7 @@ function renderTaskItem(t: HomeTaskItem): AnyBlock[] {
 
   return blocks;
 }
+
 
 function renderGroup(title: string, tasks: HomeTaskItem[]): AnyBlock[] {
   const blocks: AnyBlock[] = [
