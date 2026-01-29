@@ -13,7 +13,12 @@ export type NotifyTaskCreatedArgs = {
   taskTitle: string;
   responsible: string;
   carbonCopies: string[];
+
+  // ✅ opcionais (pra não quebrar o interactive quando você passar term)
+  term?: Date | null;
+  deadlineTime?: string | null;
 };
+
 
 async function openDm(slack: WebClient, userId: string) {
   const conv = await slack.conversations.open({ users: userId });
@@ -138,7 +143,7 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
   // ======================
   // 2) Mensagem pros CCs (mantém simples)
   // ======================
-  const ccText = `<@${createdBy}> atribuiu a atividade *${title}* para <@${responsible}> (você está em cópia)`;
+  const ccText = `👀 <@${createdBy}> atribuiu a atividade *${title}* para <@${responsible}> (você está em cópia)`;
 
   await Promise.all(
     ccUnique.map(async (ccId) => {

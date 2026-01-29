@@ -38,12 +38,12 @@ export async function openQuestionThread(args: {
 
   const cc = task.carbonCopies.map((c) => c.slackUserId);
 
-  // todos envolvidos + quem clicou
   const participants = uniq([requestedBy, task.delegation, task.responsible, ...cc]);
+  const mentions = participants.map((id) => `<@${id}>`).join(", ");
 
   const channelId = await openGroupDm(slack, participants);
 
-  const header = `❓ Dúvida — *${task.title}*`;
+  const header = `❓ Dúvida sobre a tarefa *${task.title}*. Converse com ${mentions}`;
   const meta = `UID: \`${task.id}\``;
 
   const blocks: KnownBlock[] = [
@@ -54,18 +54,9 @@ export async function openQuestionThread(args: {
   // mensagem “raiz” => cria a thread
   const msg = await slack.chat.postMessage({
     channel: channelId,
-    text: `Dúvida — ${task.title} (${task.id})`,
+    text: `Dúvida aberta por <@${requestedBy}>`,
     blocks,
   });
-
-  // primeira mensagem dentro da thread
-  if (msg.ts) {
-    await slack.chat.postMessage({
-      channel: channelId,
-      thread_ts: msg.ts,
-      text: `Thread aberta por <@${requestedBy}>. Respondam por aqui 🙂`,
-    });
-  }
 
   return { channelId, ts: msg.ts };
 }

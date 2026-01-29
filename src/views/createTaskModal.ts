@@ -1,5 +1,5 @@
-// src/slack/views/createTaskModal.ts
-import type { ModalView } from "@slack/web-api";
+// src/views/createTaskModal.ts
+import type { ModalView, KnownBlock } from "@slack/web-api";
 
 export const CREATE_TASK_MODAL_CALLBACK_ID = "create_task_modal" as const;
 
@@ -13,7 +13,33 @@ export const TASK_RECURRENCE_ACTION_ID = "recurrence" as const;
 export const TASK_PROJECT_BLOCK_ID = "project_block" as const;
 export const TASK_PROJECT_ACTION_ID = "project" as const;
 
-export function createTaskModalView(): ModalView {
+export type ProjectOption = { id: string; name: string };
+
+export function createTaskModalView(args?: { projects?: ProjectOption[] }): ModalView {
+  const projects = args?.projects ?? [];
+
+  const projectBlock: KnownBlock =
+    projects.length > 0
+      ? ({
+          type: "input",
+          optional: true,
+          block_id: TASK_PROJECT_BLOCK_ID,
+          label: { type: "plain_text", text: "Projeto" },
+          element: {
+            type: "static_select",
+            action_id: TASK_PROJECT_ACTION_ID,
+            placeholder: { type: "plain_text", text: "Selecione um projeto" },
+            options: projects.slice(0, 100).map((p) => ({
+              text: { type: "plain_text", text: p.name },
+              value: p.id,
+            })),
+          },
+        } as const)
+      : ({
+          type: "section",
+          text: { type: "mrkdwn", text: "_Nenhum projeto cadastrado ainda._" },
+        } as const);
+
   return {
     type: "modal",
     callback_id: CREATE_TASK_MODAL_CALLBACK_ID,
@@ -48,13 +74,10 @@ export function createTaskModalView(): ModalView {
       },
       {
         type: "input",
-        optional: true,
         block_id: "due_block",
         label: { type: "plain_text", text: "Prazo (data)" },
         element: { type: "datepicker", action_id: "due_date" },
       },
-
-      // ✅ NOVO: horário (00:00 até 23:59)
       {
         type: "input",
         optional: true,
@@ -66,8 +89,6 @@ export function createTaskModalView(): ModalView {
           placeholder: { type: "plain_text", text: "Ex: 18:30" },
         },
       },
-
-      // ✅ NOVO: recorrência (enum do seu banco)
       {
         type: "input",
         optional: true,
@@ -89,19 +110,8 @@ export function createTaskModalView(): ModalView {
         },
       },
 
-      // ✅ NOVO: projeto vindo do DB (external_select)
-      {
-        type: "input",
-        optional: true,
-        block_id: TASK_PROJECT_BLOCK_ID,
-        label: { type: "plain_text", text: "Projeto" },
-        element: {
-          type: "external_select",
-          action_id: TASK_PROJECT_ACTION_ID,
-          placeholder: { type: "plain_text", text: "Buscar projeto..." },
-          min_query_length: 0,
-        },
-      },
+      // ✅ Projeto (robusto: estático com opções carregadas ao abrir modal)
+      projectBlock,
 
       {
         type: "input",

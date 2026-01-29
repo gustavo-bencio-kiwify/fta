@@ -1,20 +1,47 @@
 // src/services/createTaskService.ts
 import { prisma } from "../lib/prisma";
 import { createTaskSchema, CreateTaskInput } from "../schema/taskSchema";
-import { Recurrence } from "../generated/prisma/enums"; // ajuste o path se necessário
+import { Recurrence } from "../generated/prisma/enums";
+
+const SP_TZ = "America/Sao_Paulo";
+const SP_OFFSET_HOURS = 3; // SP é UTC-3 (sem DST atualmente)
+
+// YYYY-MM-DD -> salva como 00:00 SP (== 03:00Z)
+function dateIsoToSpMidnightUtc(dateIso: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return null;
+  const d = new Date(`${dateIso}T03:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 function normalizeTerm(term: CreateTaskInput["term"]) {
   if (term === null || term === undefined) return null;
 
-  // Já veio Date
-  if (term instanceof Date) {
-    return Number.isNaN(term.getTime()) ? null : term;
-  }
-
-  // Veio como "YYYY-MM-DD"
+  // Caso venha como "YYYY-MM-DD"
   if (typeof term === "string") {
+    const sp = dateIsoToSpMidnightUtc(term);
+    if (sp) return sp;
+
+    // fallback p/ outros formatos
     const d = new Date(term);
     return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  if (term instanceof Date) {
+    if (Number.isNaN(term.getTime())) return null;
+
+    // Se foi criado por new Date("YYYY-MM-DD"), normalmente vira 00:00Z
+    // Aí em SP vira dia anterior. Corrigimos pra 03:00Z.
+    const isUtcMidnight =
+      term.getUTCHours() === 0 &&
+      term.getUTCMinutes() === 0 &&
+      term.getUTCSeconds() === 0 &&
+      term.getUTCMilliseconds() === 0;
+
+    if (isUtcMidnight) {
+      return new Date(term.getTime() + SP_OFFSET_HOURS * 60 * 60 * 1000);
+    }
+
+    return term;
   }
 
   return null;
@@ -31,10 +58,13 @@ function normalizeRecurrence(r: unknown): Recurrence | null {
     "quarterly",
     "semiannual",
     "annual",
-    "none", // existe no seu enum, mas o modal não oferece
+    "none",
   ];
 
-  if (typeof r === "string" && (allowed as string[]).includes(r)) return r as Recurrence;
+  if (typeof r === "string" && (allowed as string[]).includes(r)) {
+    if (r === "none") return null;
+    return r as Recurrence;
+  }
 
   return null;
 }
@@ -58,17 +88,15 @@ export async function createTaskService(raw: unknown) {
       recurrence,
       projectId: data.projectId ?? null,
 
+      recurrenceAnchor: recurrence ? term : null,
+
       urgency: data.urgency,
       status: "pending",
 
       ...(data.carbonCopies.length
         ? {
             carbonCopies: {
-              createMany: {
-                data: data.carbonCopies.map((id) => ({
-                  slackUserId: id,
-                })),
-              },
+              createMany: { data: data.carbonCopies.map((id) => ({ slackUserId: id })) },
             },
           }
         : {}),

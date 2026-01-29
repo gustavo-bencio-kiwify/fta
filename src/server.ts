@@ -1,10 +1,15 @@
 import { fastify } from "fastify";
+import "dotenv/config";
 import { createTask } from "./routes/createTask";
 import { slackRoutes } from "./routes/slackRoutes";
 import { debug } from "./routes/debugTables";
 import { sendMessage } from "./routes/sendMessage";
 
-const app = fastify()
+const app = fastify({
+  logger: {
+    level: "info",
+  },
+});
 
 app.register(createTask)
 app.register(slackRoutes)
