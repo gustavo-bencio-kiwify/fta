@@ -174,6 +174,7 @@ function renderGroup(title: string, blocksInside: KnownBlock[]): KnownBlock[] {
 
 export function homeTasksBlocks(args: {
   // você é responsável
+  tasksOverdue: HomeTaskItem[];
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
@@ -204,6 +205,8 @@ export function homeTasksBlocks(args: {
   // SUAS TAREFAS (RESPONSÁVEL)
   // =========================
   pushHeader("📌 Suas tarefas (você é responsável)");
+  pushGroup("Atrasadas", args.tasksOverdue.flatMap(renderMyTaskItem));
+  pushDivider();
   pushGroup("Hoje", args.tasksToday.flatMap(renderMyTaskItem));
   pushDivider();
   pushGroup("Amanhã", args.tasksTomorrow.flatMap(renderMyTaskItem));
