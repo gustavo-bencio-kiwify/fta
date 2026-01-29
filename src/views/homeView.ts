@@ -11,6 +11,23 @@ export function homeView(args: {
 }): HomeView {
   return {
     type: "home",
-    blocks: [...homeHeaderActionsBlocks(), ...homeTasksBlocks(args)],
+    blocks: [
+      ...homeHeaderActionsBlocks(),
+      ...homeTasksBlocks({
+        ...args,
+
+        // ✅ campos exigidos por homeTasksBlocks (por enquanto vazios)
+        delegatedToday: [],
+        delegatedTomorrow: [],
+        delegatedFuture: [],
+
+        ccToday: [],
+        ccTomorrow: [],
+        ccFuture: [],
+
+        recurrences: [],
+        projects: [],
+      }),
+    ],
   };
 }
