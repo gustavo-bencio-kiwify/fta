@@ -14,11 +14,10 @@ export type NotifyTaskCreatedArgs = {
   responsible: string;
   carbonCopies: string[];
 
-  // ✅ opcionais (pra não quebrar o interactive quando você passar term)
+  // opcionais
   term?: Date | null;
   deadlineTime?: string | null;
 };
-
 
 async function openDm(slack: WebClient, userId: string) {
   const conv = await slack.conversations.open({ users: userId });
@@ -43,6 +42,12 @@ function formatPrazoBR(term?: Date | null, deadlineTime?: string | null) {
 function safeDesc(desc?: string | null) {
   const d = desc?.trim();
   return d ? d : "—";
+}
+
+function formatMentions(ids: string[]) {
+  const unique = Array.from(new Set(ids)).filter(Boolean);
+  if (!unique.length) return "—";
+  return unique.map((id) => `<@${id}>`).join(", ");
 }
 
 export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
@@ -70,18 +75,43 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
   const urg = urgencyLabel((task as any)?.urgency ?? null);
 
   // ======================
+  // 0) ✅ Mensagem pro criador/delegador (NOVA)
+  // ======================
+  // Regra: notifica apenas quando você cria para outra pessoa, evitando duplicar quando cria para si
+  if (createdBy && createdBy !== responsible) {
+    try {
+      const ccForCreator = ccUnique.filter((id) => id !== responsible && id !== createdBy);
+      const ccText = formatMentions(ccForCreator);
+
+      const creatorText =
+        `✅ *Tarefa criada:* ${title}` +
+        ` • *Resp:* <@${responsible}>` +
+        ` • *Prazo:* ${prazo}` +
+        ` • *Cópia:* ${ccText}`;
+
+      const channelId = await openDm(slack, createdBy);
+
+      await slack.chat.postMessage({
+        channel: channelId,
+        text: creatorText,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: creatorText } }],
+      });
+    } catch (e) {
+      console.error("[notifyTaskCreated] failed to notify creator:", e);
+    }
+  }
+
+  // ======================
   // 1) Mensagem pro responsável (sempre, inclusive self)
   // ======================
   try {
     const channelId = await openDm(slack, responsible);
 
     const blocks: KnownBlock[] = [
-      // Linha 1 (grande)
       {
         type: "section",
         text: { type: "mrkdwn", text: `📌 *Delegado por:* <@${createdBy}>` },
       },
-      // Linha 2 (grande)
       {
         type: "section",
         text: { type: "mrkdwn", text: `🚨 *Urgência:* ${urg}` },
@@ -89,7 +119,6 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
 
       { type: "divider" },
 
-      // Nome + Descrição (maior, estilo do print)
       {
         type: "section",
         fields: [
@@ -98,13 +127,11 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
         ],
       },
 
-      // Prazo
       {
         type: "section",
         text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` },
       },
 
-      // Botões
       {
         type: "actions",
         elements: [
@@ -118,13 +145,12 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
           {
             type: "button",
             text: { type: "plain_text", text: "❓ Enviar dúvida" },
-            action_id: TASKS_SEND_QUESTION_ACTION_ID, // pode reutilizar o mesmo handler
+            action_id: TASKS_SEND_QUESTION_ACTION_ID,
             value: taskId,
           },
         ],
       },
 
-      // UID
       {
         type: "context",
         elements: [{ type: "mrkdwn", text: `UID: \`${taskId}\`` }],
@@ -148,6 +174,7 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
   await Promise.all(
     ccUnique.map(async (ccId) => {
       try {
+        if (!ccId) return;
         if (ccId === responsible) return;
 
         const channelId = await openDm(slack, ccId);
