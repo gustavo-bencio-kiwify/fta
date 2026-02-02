@@ -3,7 +3,6 @@ import { prisma } from "../lib/prisma";
 import { createTaskSchema, CreateTaskInput } from "../schema/taskSchema";
 import { Recurrence } from "../generated/prisma/enums";
 
-const SP_TZ = "America/Sao_Paulo";
 const SP_OFFSET_HOURS = 3; // SP é UTC-3 (sem DST atualmente)
 
 // YYYY-MM-DD -> salva como 00:00 SP (== 03:00Z)
@@ -16,12 +15,10 @@ function dateIsoToSpMidnightUtc(dateIso: string): Date | null {
 function normalizeTerm(term: CreateTaskInput["term"]) {
   if (term === null || term === undefined) return null;
 
-  // Caso venha como "YYYY-MM-DD"
   if (typeof term === "string") {
     const sp = dateIsoToSpMidnightUtc(term);
     if (sp) return sp;
 
-    // fallback p/ outros formatos
     const d = new Date(term);
     return Number.isNaN(d.getTime()) ? null : d;
   }
@@ -29,8 +26,6 @@ function normalizeTerm(term: CreateTaskInput["term"]) {
   if (term instanceof Date) {
     if (Number.isNaN(term.getTime())) return null;
 
-    // Se foi criado por new Date("YYYY-MM-DD"), normalmente vira 00:00Z
-    // Aí em SP vira dia anterior. Corrigimos pra 03:00Z.
     const isUtcMidnight =
       term.getUTCHours() === 0 &&
       term.getUTCMinutes() === 0 &&
@@ -87,6 +82,9 @@ export async function createTaskService(raw: unknown) {
       deadlineTime: data.deadlineTime ?? null,
       recurrence,
       projectId: data.projectId ?? null,
+
+      // ✅ NOVO
+      dependsOnId: data.dependsOnId ?? null,
 
       recurrenceAnchor: recurrence ? term : null,
 

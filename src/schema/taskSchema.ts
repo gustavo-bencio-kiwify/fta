@@ -6,6 +6,7 @@ const slackUserIdSchema = z.string().regex(/^[UW][A-Z0-9]+$/);
 export const urgencySchema = z.enum(["light", "asap", "turbo"]);
 
 export const recurrenceSchema = z.enum([
+  "none",
   "daily",
   "weekly",
   "biweekly",
@@ -25,16 +26,18 @@ export const createTaskSchema = z.object({
   // Data do prazo (pode vir Date ou string YYYY-MM-DD)
   term: z.any().optional(),
 
-  // ✅ NOVO
   deadlineTime: z
     .string()
-    .regex(/^\d{2}:\d{2}$/) // "HH:MM"
+    .regex(/^\d{2}:\d{2}$/)
     .nullable()
     .optional(),
 
   recurrence: recurrenceSchema.nullable().optional(),
 
   projectId: z.string().uuid().nullable().optional(),
+
+  // ✅ NOVO
+  dependsOnId: z.string().uuid().nullable().optional(),
 
   urgency: urgencySchema,
 

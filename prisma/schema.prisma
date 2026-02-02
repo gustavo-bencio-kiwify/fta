@@ -15,6 +15,7 @@ enum Urgency {
 
 enum TaskStatus {
   pending
+  blocked
   done
   overdue
 }
@@ -36,43 +37,43 @@ enum ProjectStatus {
 }
 
 model Project {
-  @@map("projects")
-  id          String        @id @default(uuid())
+  id          String    @id @default(uuid())
   name        String
   description String?
   endDate     DateTime?
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime  @default(now())
 
   // ✅ NOVO
   status      ProjectStatus @default(active)
   concludedAt DateTime?
 
-  tasks       Task[]
+  tasks Task[]
 
-  members     ProjectMember[]
+  members ProjectMember[]
+
+  @@map("projects")
 }
 
 model ProjectMember {
-  @@map("project-members")
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   slackUserId String
   email       String?
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([projectId, slackUserId])
   @@index([slackUserId])
   @@index([projectId])
+  @@map("project-members")
 }
 
 model Task {
-  @@map("tasks")
-  id              String      @id @default(uuid())
-  title           String
-  description     String?
+  id          String  @id @default(uuid())
+  title       String
+  description String?
 
   // quem delegou (Slack)
   delegation      String
@@ -83,65 +84,70 @@ model Task {
   responsibleEmail String?
 
   // data
-  term            DateTime?
+  term DateTime?
 
   // horário do prazo (ex: "18:30") — opcional
-  deadlineTime    String?
+  deadlineTime String?
 
   // status
-  status          TaskStatus  @default(pending)
+  status TaskStatus @default(pending)
 
   // recorrência (opcional)
-  recurrence      Recurrence?
+  recurrence Recurrence?
 
-  urgency         Urgency
-  createdAt       DateTime    @default(now())
+  urgency   Urgency
+  createdAt DateTime @default(now())
 
   // vínculo com projeto (opcional)
-  projectId       String?
-  project         Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  carbonCopies    TaskCarbonCopy[]
+  carbonCopies TaskCarbonCopy[]
 
   // ✅ NOVO: logs de lembretes (evita duplicar notificações)
-  reminders       TaskReminderLog[]
+  reminders TaskReminderLog[]
 
-   recurrenceAnchor DateTime?
+  recurrenceAnchor DateTime?
+  dependsOnId      String?
+  dependsOn        Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
+  dependents       Task[]    @relation("TaskDependsOn")
+
+  @@map("tasks")
 }
 
 model TaskCarbonCopy {
-  @@map("task-carbon-copies")
-  id          String   @id @default(uuid())
-  taskId      String
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   slackUserId String
   email       String?
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([taskId, slackUserId])
   @@index([slackUserId])
   @@index([taskId])
+  @@map("task-carbon-copies")
 }
 
 // ✅ NOVO: log de lembretes enviados
 model TaskReminderLog {
-  @@map("task-reminder-logs")
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   // data “do lembrete” no fuso SP: "YYYY-MM-DD"
-  dateIso   String
+  dateIso String
 
   // slot do lembrete: ex "L_10:00", "A_12:00", "T_16:30"
-  slot      String
+  slot String
 
   createdAt DateTime @default(now())
 
   @@unique([taskId, dateIso, slot])
   @@index([dateIso, slot])
   @@index([taskId])
+  @@map("task-reminder-logs")
 }

@@ -13,6 +13,10 @@ export const TASK_RECURRENCE_ACTION_ID = "recurrence" as const;
 export const TASK_PROJECT_BLOCK_ID = "project_block" as const;
 export const TASK_PROJECT_ACTION_ID = "project" as const;
 
+// ✅ NOVO: depende de (external_select)
+export const TASK_DEPENDS_BLOCK_ID = "depends_block" as const;
+export const TASK_DEPENDS_ACTION_ID = "depends_on" as const;
+
 export type ProjectOption = { id: string; name: string };
 
 export function createTaskModalView(args?: { projects?: ProjectOption[] }): ModalView {
@@ -21,24 +25,24 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
   const projectBlock: KnownBlock =
     projects.length > 0
       ? ({
-          type: "input",
-          optional: true,
-          block_id: TASK_PROJECT_BLOCK_ID,
-          label: { type: "plain_text", text: "Projeto" },
-          element: {
-            type: "static_select",
-            action_id: TASK_PROJECT_ACTION_ID,
-            placeholder: { type: "plain_text", text: "Selecione um projeto" },
-            options: projects.slice(0, 100).map((p) => ({
-              text: { type: "plain_text", text: p.name },
-              value: p.id,
-            })),
-          },
-        } as const)
+        type: "input",
+        optional: true,
+        block_id: TASK_PROJECT_BLOCK_ID,
+        label: { type: "plain_text", text: "Projeto" },
+        element: {
+          type: "static_select",
+          action_id: TASK_PROJECT_ACTION_ID,
+          placeholder: { type: "plain_text", text: "Selecione um projeto" },
+          options: projects.slice(0, 100).map((p) => ({
+            text: { type: "plain_text", text: p.name },
+            value: p.id,
+          })),
+        },
+      } as const)
       : ({
-          type: "section",
-          text: { type: "mrkdwn", text: "_Nenhum projeto cadastrado ainda._" },
-        } as const);
+        type: "section",
+        text: { type: "mrkdwn", text: "_Nenhum projeto cadastrado ainda._" },
+      } as const);
 
   return {
     type: "modal",
@@ -89,6 +93,22 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
           placeholder: { type: "plain_text", text: "Ex: 18:30" },
         },
       },
+
+      // ✅ DEPENDE DE
+      {
+        type: "input",
+        optional: true,
+        block_id: TASK_DEPENDS_BLOCK_ID,
+        label: { type: "plain_text", text: "Depende de" },
+        element: {
+          type: "external_select",
+          action_id: TASK_DEPENDS_ACTION_ID,
+          min_query_length: 0,
+          placeholder: { type: "plain_text", text: "Selecione a tarefa principal" },
+        },
+      },
+
+
       {
         type: "input",
         optional: true,
@@ -99,6 +119,7 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
           action_id: TASK_RECURRENCE_ACTION_ID,
           placeholder: { type: "plain_text", text: "Sem recorrência" },
           options: [
+            { text: { type: "plain_text", text: "Sem recorrência" }, value: "none" },
             { text: { type: "plain_text", text: "Diária" }, value: "daily" },
             { text: { type: "plain_text", text: "Semanal" }, value: "weekly" },
             { text: { type: "plain_text", text: "Quinzenal" }, value: "biweekly" },
@@ -107,10 +128,10 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
             { text: { type: "plain_text", text: "Semestral" }, value: "semiannual" },
             { text: { type: "plain_text", text: "Anual" }, value: "annual" },
           ],
+          initial_option: { text: { type: "plain_text", text: "Sem recorrência" }, value: "none" },
         },
       },
 
-      // ✅ Projeto (robusto: estático com opções carregadas ao abrir modal)
       projectBlock,
 
       {
