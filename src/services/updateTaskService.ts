@@ -1,78 +1,151 @@
 // src/services/updateTaskService.ts
 import { prisma } from "../lib/prisma";
 
-function normalizeTermFromIsoDate(iso?: string | null) {
-  if (!iso) return null;
-  // iso: YYYY-MM-DD (vindo do datepicker)
-  const d = new Date(`${iso}T00:00:00.000Z`);
-  return Number.isNaN(d.getTime()) ? null : d;
+function toSaoPauloMidnightDate(termIso: string) {
+  // iso: YYYY-MM-DD
+  // 00:00 SP => 03:00Z (considerando SP -03)
+  return new Date(`${termIso}T03:00:00.000Z`);
+}
+
+/**
+ * Recurrence no banco é enum.
+ * Aqui tratamos como string vinda do modal.
+ * - "none" / "" / null => null
+ * - qualquer outro valor => set (cast como any pra não brigar com enum types)
+ */
+function buildRecurrenceUpdate(input: string | null) {
+  const v = (input ?? "").trim();
+  if (!v || v === "none") return null;
+  return { set: v as any } as any;
+}
+
+/**
+ * ✅ Select fixo => TS infere corretamente `carbonCopies`
+ */
+const TASK_SELECT = {
+  id: true,
+  title: true,
+  description: true,
+  delegation: true,
+  responsible: true,
+  term: true,
+  deadlineTime: true,
+  recurrence: true,
+  urgency: true,
+  createdAt: true,
+  carbonCopies: { select: { slackUserId: true } },
+} as const;
+
+type TaskSelected = {
+  id: string;
+  title: string;
+  description: string | null;
+  delegation: string | null;
+  responsible: string;
+  term: Date | null;
+  deadlineTime: string | null;
+  recurrence: any;
+  urgency: any;
+  createdAt: Date;
+  carbonCopies: { slackUserId: string }[];
+};
+
+type TaskSnapshot = {
+  id: string;
+  title: string;
+  description: string | null;
+  delegation: string | null;
+  responsible: string;
+  term: Date | null;
+  deadlineTime: string | null;
+  recurrence: string | null;
+  urgency: string;
+  createdAt: Date;
+  carbonCopies: string[];
+};
+
+function toSnapshot(t: TaskSelected): TaskSnapshot {
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    delegation: t.delegation,
+    responsible: t.responsible,
+    term: t.term,
+    deadlineTime: t.deadlineTime ?? null,
+    recurrence: t.recurrence ? String(t.recurrence) : null,
+    urgency: t.urgency ? String(t.urgency) : "light",
+    createdAt: t.createdAt,
+    carbonCopies: (t.carbonCopies ?? []).map((c: { slackUserId: string }) => c.slackUserId),
+  };
 }
 
 export async function updateTaskService(args: {
   taskId: string;
   delegationSlackId: string;
 
-  // PATCH (somente campos editáveis neste modal)
   title: string;
-  description?: string | null;
-  termIso?: string | null;        // "YYYY-MM-DD" | null  (opcional)
-  deadlineTime?: string | null;   // "HH:MM" | null (opcional)
+  description: string | null;
+
+  termIso: string | null; // YYYY-MM-DD
+  deadlineTime: string | null; // HH:MM | null
+
+  responsibleSlackId: string;
+  carbonCopiesSlackIds: string[];
+  recurrence: string | null;
 }) {
-  const existing = await prisma.task.findUnique({
-    where: { id: args.taskId },
-    select: {
-      id: true,
-      title: true,
-      description: true,
-      term: true,
-      deadlineTime: true,
+  const {
+    taskId,
+    delegationSlackId,
+    title,
+    description,
+    termIso,
+    deadlineTime,
+    responsibleSlackId,
+    carbonCopiesSlackIds,
+    recurrence,
+  } = args;
 
-      delegation: true,
-      responsible: true,
-      carbonCopies: { select: { slackUserId: true } },
-    },
+  const beforeRaw = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: TASK_SELECT,
   });
 
-  if (!existing) throw new Error("Task not found");
-  if (existing.delegation !== args.delegationSlackId) throw new Error("Not allowed");
+  const before = beforeRaw as unknown as TaskSelected | null;
 
-  const term = args.termIso !== undefined ? normalizeTermFromIsoDate(args.termIso) : undefined;
-  const deadlineTime =
-    args.deadlineTime !== undefined ? (args.deadlineTime?.trim() ? args.deadlineTime.trim() : null) : undefined;
+  if (!before) throw new Error(`Task not found: ${taskId}`);
+  if (before.delegation !== delegationSlackId) throw new Error("Not allowed to edit this task");
 
-  const updated = await prisma.task.update({
-    where: { id: args.taskId },
+  const newTerm = termIso ? toSaoPauloMidnightDate(termIso) : null;
+  const newTime = deadlineTime?.trim() ? deadlineTime.trim() : null;
+
+  const newCc = Array.from(new Set((carbonCopiesSlackIds ?? []).filter(Boolean)));
+  const recurrenceUpdate = buildRecurrenceUpdate(recurrence);
+
+  const afterRaw = await prisma.task.update({
+    where: { id: taskId },
     data: {
-      // só muda se vier
-      title: args.title.trim(),
-      description: args.description?.trim() ? args.description.trim() : null,
+      title: title.trim(),
+      description: description?.trim() ? description.trim() : null,
+      term: newTerm,
+      deadlineTime: newTime,
 
-      ...(term !== undefined ? { term } : {}),
-      ...(deadlineTime !== undefined ? { deadlineTime } : {}),
-    },
-    select: {
-      id: true,
-      title: true,
-      description: true,
-      term: true,
-      deadlineTime: true,
+      responsible: responsibleSlackId,
+      recurrence: recurrenceUpdate as any,
 
-      delegation: true,
-      responsible: true,
-      carbonCopies: { select: { slackUserId: true } },
+      // 🔁 substitui CCs
+      carbonCopies: {
+        deleteMany: {},
+        create: newCc.map((slackUserId: string) => ({ slackUserId })),
+      },
     },
+    select: TASK_SELECT,
   });
+
+  const after = afterRaw as unknown as TaskSelected;
 
   return {
-    before: {
-      title: existing.title,
-      responsible: existing.responsible,
-      carbonCopies: existing.carbonCopies.map((c) => c.slackUserId),
-    },
-    after: {
-      title: updated.title,
-      responsible: updated.responsible,
-      carbonCopies: updated.carbonCopies.map((c) => c.slackUserId),
-    },
+    before: toSnapshot(before),
+    after: toSnapshot(after),
   };
 }

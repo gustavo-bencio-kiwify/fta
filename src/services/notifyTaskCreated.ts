@@ -3,7 +3,7 @@ import type { WebClient, KnownBlock } from "@slack/web-api";
 import { prisma } from "../lib/prisma";
 import { TASKS_SEND_QUESTION_ACTION_ID } from "../views/homeTasksBlocks";
 
-// ✅ action_id do botão "Concluir" na mensagem (o interactive precisa tratar)
+// action_id do botão "Concluir"
 export const TASK_DETAILS_CONCLUDE_ACTION_ID = "task_details_conclude" as const;
 
 export type NotifyTaskCreatedArgs = {
@@ -14,7 +14,6 @@ export type NotifyTaskCreatedArgs = {
   responsible: string;
   carbonCopies: string[];
 
-  // opcionais
   term?: Date | null;
   deadlineTime?: string | null;
 };
@@ -52,11 +51,9 @@ function formatMentions(ids: string[]) {
 
 export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
   const { slack, taskId, createdBy, responsible, carbonCopies } = args;
-
-  // remove duplicados
   const ccUnique = Array.from(new Set(carbonCopies ?? [])).filter(Boolean);
 
-  // ✅ Busca no banco: garante prazo/descrição/urgência corretos
+  // busca a task pra garantir dados atuais
   const task = await prisma.task.findUnique({
     where: { id: taskId },
     select: {
@@ -74,10 +71,9 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
   const prazo = formatPrazoBR(task?.term ?? null, (task as any)?.deadlineTime ?? null);
   const urg = urgencyLabel((task as any)?.urgency ?? null);
 
-  // ======================
-  // 0) ✅ Mensagem pro criador/delegador (NOVA)
-  // ======================
-  // Regra: notifica apenas quando você cria para outra pessoa, evitando duplicar quando cria para si
+  // =======================================
+  // 0) Mensagem pro criador (delegador)
+  // =======================================
   if (createdBy && createdBy !== responsible) {
     try {
       const ccForCreator = ccUnique.filter((id) => id !== responsible && id !== createdBy);
@@ -90,7 +86,6 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
         ` • *Cópia:* ${ccText}`;
 
       const channelId = await openDm(slack, createdBy);
-
       await slack.chat.postMessage({
         channel: channelId,
         text: creatorText,
@@ -101,9 +96,10 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
     }
   }
 
-  // ======================
-  // 1) Mensagem pro responsável (sempre, inclusive self)
-  // ======================
+  // =======================================
+  // 1) Mensagem de abertura pro responsável
+  // ✅ SALVA slackOpenChannelId + slackOpenMessageTs
+  // =======================================
   try {
     const channelId = await openDm(slack, responsible);
 
@@ -122,15 +118,12 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
       {
         type: "section",
         fields: [
-          { type: "mrkdwn", text: `*Nome da tarefa:* ${title}` },
+          { type: "mrkdwn", text: `*Título:* ${title}` },
           { type: "mrkdwn", text: `*Descrição:* ${desc}` },
         ],
       },
 
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` },
-      },
+      { type: "section", text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` } },
 
       {
         type: "actions",
@@ -157,18 +150,27 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
       },
     ];
 
-    await slack.chat.postMessage({
+    // ✅ IMPORTANTÍSSIMO: guardar retorno
+    const msg = await slack.chat.postMessage({
       channel: channelId,
       text: `<@${createdBy}> atribuiu a atividade "${title}" para você`,
       blocks,
     });
+
+    // ✅ salva a thread da abertura (pra reminders irem pra lá)
+    if (msg.ts) {
+      await prisma.task.update({
+        where: { id: taskId },
+        data: { slackOpenChannelId: channelId, slackOpenMessageTs: msg.ts },
+      });
+    }
   } catch (e) {
     console.error("[notifyTaskCreated] failed to notify responsible:", e);
   }
 
-  // ======================
-  // 2) Mensagem pros CCs (mantém simples)
-  // ======================
+  // =======================================
+  // 2) Mensagem pros CCs
+  // =======================================
   const ccText = `👀 <@${createdBy}> atribuiu a atividade *${title}* para <@${responsible}> (você está em cópia)`;
 
   await Promise.all(

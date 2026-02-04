@@ -43,7 +43,7 @@ export async function openQuestionThread(args: {
 
   const channelId = await openGroupDm(slack, participants);
 
-  const header = `❓ Dúvida sobre a tarefa *${task.title}*. Converse com ${mentions}`;
+  const header = `❓ Dúvida sobre a tarefa *${task.title}*.}`;
   const meta = `UID: \`${task.id}\``;
 
   const blocks: KnownBlock[] = [
@@ -57,6 +57,15 @@ export async function openQuestionThread(args: {
     text: `Dúvida aberta por <@${requestedBy}>`,
     blocks,
   });
+
+  // ✅ mensagem dentro da thread
+  if (msg.ts) {
+    await slack.chat.postMessage({
+      channel: channelId,
+      thread_ts: msg.ts,
+      text:`:speech_balloon: *Envie aqui suas dúvidas nessa thread*. Converse com ${mentions}`,
+    });
+  }
 
   return { channelId, ts: msg.ts };
 }

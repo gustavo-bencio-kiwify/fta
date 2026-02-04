@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "tsx watch --env-file .env src/server.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "turbo:reminder": "node -r ts-node/register src/jobs/turboUrgencyReminderCron.ts",
+    "turbo:reminder:prod": "node dist/jobs/turboUrgencyReminderCron.js"
   },
   "dependencies": {
     "@fastify/formbody": "^8.0.2",
@@ -18,9 +20,11 @@
     "@prisma/client": "^7.2.0",
     "@slack/web-api": "^7.13.0",
     "better-sqlite3": "^12.6.0",
+    "cron": "^4.4.0",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.2",
     "googleapis": "^170.1.0",
+    "node-cron": "^4.2.1",
     "pg": "^8.17.1",
     "zod": "^4.3.5"
   },

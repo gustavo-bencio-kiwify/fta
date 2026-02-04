@@ -223,8 +223,6 @@ export function homeTasksBlocks(args: {
 
       // ✅ importante: value fixo (não existe `task` aqui)
       { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
-
-      { type: "button", text: { type: "plain_text", text: "🔄 Atualizar" }, action_id: TASKS_REFRESH_ACTION_ID, value: "refresh" },
     ],
   });
   pushDivider();
@@ -243,7 +241,6 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "delegated_actions",
     elements: [
-      { type: "button", text: { type: "plain_text", text: "📢 Enviar FUP" }, action_id: DELEGATED_SEND_FUP_ACTION_ID, value: "fup" },
       { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
       { type: "button", text: { type: "plain_text", text: "✏️ Editar" }, action_id: DELEGATED_EDIT_ACTION_ID, value: "edit" },

@@ -8,28 +8,41 @@ async function openGroupDm(slack: WebClient, userIds: string[]) {
   return channelId;
 }
 
+async function postWithThread(slack: WebClient, channel: string, rootText: string, threadText: string) {
+  const root = await slack.chat.postMessage({
+    channel,
+    text: rootText,
+  });
+
+  const threadTs = root.ts;
+  if (!threadTs) return;
+
+  await slack.chat.postMessage({
+    channel,
+    text: threadText,
+    thread_ts: threadTs,
+  });
+}
+
 export async function notifyTaskCanceledGroup(args: {
-    slack: WebClient;
-    canceledBySlackId: string;
-    responsibleSlackId: string;
-    carbonCopiesSlackIds: string[];
-    taskTitle: string;
+  slack: WebClient;
+  canceledBySlackId: string;
+  responsibleSlackId: string;
+  carbonCopiesSlackIds: string[];
+  taskTitle: string;
 }) {
-    const { slack, canceledBySlackId, responsibleSlackId, carbonCopiesSlackIds, taskTitle } = args;
+  const { slack, canceledBySlackId, responsibleSlackId, carbonCopiesSlackIds, taskTitle } = args;
 
-    // participantes: delegador + responsável + CCs
-    const participants = [
-        canceledBySlackId,
-        responsibleSlackId,
-        ...(carbonCopiesSlackIds ?? []),
-    ];
+  // participantes: quem cancelou + responsável + CCs
+  const participants = [canceledBySlackId, responsibleSlackId, ...(carbonCopiesSlackIds ?? [])];
 
-    const channelId = await openGroupDm(slack, participants);
+  const channelId = await openGroupDm(slack, participants);
 
-    const text = `❌ Tarefa cancelada por <@${canceledBySlackId}>`;
+  // ✅ Mensagem raiz
+  const rootText = `❌ Tarefa cancelada!`;
 
-    await slack.chat.postMessage({
-        channel: channelId,
-        text,
-    });
+  // ✅ Mensagem na thread
+  const threadText = `:bell: Tarefa *${taskTitle}* cancelada por <@${canceledBySlackId}>`;
+
+  await postWithThread(slack, channelId, rootText, threadText);
 }

@@ -1,107 +1,67 @@
 // src/services/notifyTaskCompleted.ts
-import type { WebClient } from "@slack/web-api";
+import type { WebClient, KnownBlock } from "@slack/web-api";
+import { prisma } from "../lib/prisma";
 
-type NotifyTaskCompletedArgs = {
+// ✅ exporta o action_id do botão "Reabrir"
+export const TASK_REOPEN_ACTION_ID = "task_reopen" as const;
+
+export async function notifyTaskCompleted(args: {
   slack: WebClient;
-  taskTitle: string;
-  responsible: string;
-  delegation: string;
-  carbonCopies: string[];
-};
+  taskId: string;
+  completedBySlackId: string;
+}) {
+  const { slack, taskId, completedBySlackId } = args;
 
-function mention(userId: string) {
-  return `<@${userId}>`;
-}
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: {
+      id: true,
+      title: true,
+      slackOpenChannelId: true,
+      slackOpenMessageTs: true,
+    },
+  });
 
-function uniq(arr: string[]) {
-  return Array.from(new Set(arr.filter(Boolean)));
-}
+  if (!task) return;
 
-async function openDmChannel(slack: WebClient, userId: string) {
-  const conv = await slack.conversations.open({ users: userId });
-  const channelId = conv.channel?.id;
-  if (!channelId) throw new Error("conversations.open returned no channel (DM)");
-  return channelId;
-}
+  // ✅ Atualiza a mensagem de abertura (remove botões) e deixa "✅ Concluída"
+  // Se você já tem isso em outro lugar, pode manter lá — mas aqui é o local ideal.
+  if (task.slackOpenChannelId && task.slackOpenMessageTs) {
+    const blocks: KnownBlock[] = [
+      { type: "section", text: { type: "mrkdwn", text: `✅ *Concluída* por <@${completedBySlackId}>` } },
+      { type: "context", elements: [{ type: "mrkdwn", text: `UID: \`${taskId}\`` }] },
+    ];
 
-async function openGroupDmChannel(slack: WebClient, userIds: string[]) {
-  const users = userIds.join(",");
-  const conv = await slack.conversations.open({ users });
-  const channelId = conv.channel?.id;
-  if (!channelId) throw new Error("conversations.open returned no channel (MPIM)");
-  return channelId;
-}
-
-function isMissingScopeError(e: any) {
-  const msg = (e?.data?.error ?? e?.message ?? "").toString();
-  return msg.includes("missing_scope") || msg.includes("not_allowed_token_type");
-}
-
-export async function notifyTaskCompleted(args: NotifyTaskCompletedArgs) {
-  const { slack, taskTitle, responsible, delegation } = args;
-
-  const ccUnique = uniq(args.carbonCopies ?? []);
-
-  // participantes: responsável + delegador + CC
-  let participants = uniq([responsible, delegation, ...ccUnique]);
-
-  // remove IDs obviamente inválidos
-  participants = participants.filter((u) => u.startsWith("U") || u.startsWith("W"));
-
-  // tenta remover o próprio bot da lista (evita erro em alguns workspaces)
-  try {
-    const auth = await slack.auth.test();
-    const botUserId = auth.user_id;
-    if (botUserId) participants = participants.filter((u) => u !== botUserId);
-  } catch {
-    // se falhar, segue sem remover
+    // ✅ tenta substituir a mensagem raiz (remove actions)
+    await slack.chat.update({
+      channel: task.slackOpenChannelId,
+      ts: task.slackOpenMessageTs,
+      text: `✅ Concluída`,
+      blocks,
+    });
   }
 
-  const ccMentions = ccUnique.map(mention);
-
-  const line1 = `✅ A tarefa *${taskTitle}* foi concluída.`;
-  const line2 =
-    ccMentions.length > 0
-      ? `${mention(responsible)}, aqui você pode dar ou receber feedback de ${mention(
-          delegation
-        )}, com cópia para ${ccMentions.join(", ")}`
-      : `${mention(responsible)}, aqui você pode dar ou receber feedback de ${mention(delegation)}.`;
-
-  const text = `${line1}\n${line2}`;
-
-  // Se só tem 1 pessoa, manda DM direto (não tenta MPIM)
-  if (participants.length <= 1) {
-    const only = participants[0];
-    if (!only) return;
-    const channelId = await openDmChannel(slack, only);
-    await slack.chat.postMessage({ channel: channelId, text });
-    return;
+  // ✅ Opcional: posta na thread um botão de reabrir
+  if (task.slackOpenChannelId && task.slackOpenMessageTs) {
+    await slack.chat.postMessage({
+      channel: task.slackOpenChannelId,
+      thread_ts: task.slackOpenMessageTs,
+      text: `🧾 Tarefa concluída. Aqui você pode dar um receber feedback de 
+      Se precisar, reabra como uma nova tarefa.`,
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: `🧾 Tarefa concluída. Se precisar, reabra como uma nova tarefa.` } },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: { type: "plain_text", text: "🔁 Reabrir" },
+              action_id: TASK_REOPEN_ACTION_ID,
+              value: taskId,
+            },
+          ],
+        },
+      ],
+    });
   }
-
-  // ✅ tentativa: grupo DM (MPIM)
-  try {
-    const channelId = await openGroupDmChannel(slack, participants);
-    await slack.chat.postMessage({ channel: channelId, text });
-    return;
-  } catch (e) {
-    // fallback: DMs individuais
-    console.error("[notifyTaskCompleted] openGroupDm failed:", e);
-
-    // se for missing_scope, nem insiste no MPIM novamente
-    if (isMissingScopeError(e)) {
-      console.error("[notifyTaskCompleted] missing scope for MPIM. Using individual DMs.");
-    }
-  }
-
-  // ✅ fallback: DMs individuais
-  await Promise.allSettled(
-    participants.map(async (uid) => {
-      try {
-        const channelId = await openDmChannel(slack, uid);
-        await slack.chat.postMessage({ channel: channelId, text });
-      } catch (e) {
-        console.error("[notifyTaskCompleted] DM failed:", { uid, e });
-      }
-    })
-  );
 }

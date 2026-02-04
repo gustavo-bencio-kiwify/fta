@@ -19,9 +19,12 @@ export async function createProjectService(
   // 1) cria o projeto
   const project = await prisma.project.create({
     data: {
-      name: args.name,
-      description: args.description ?? null,
+      name: args.name.trim(),
+      description: args.description?.trim() ? args.description.trim() : null,
       endDate: args.endDate ?? null,
+
+      // ✅ criador (precisa existir no schema do Prisma)
+      createdBySlackId: args.createdBySlackId,
     },
     select: { id: true, name: true },
   });
@@ -45,16 +48,8 @@ export async function createProjectService(
       try {
         const opened = await slack.conversations.open({ users: userId });
         const channelId = opened.channel?.id;
-        if (channelId) {
-          await slack.chat.postMessage({ channel: channelId, text });
-          return;
-        }
-      } catch {
-        // ignore
-      }
-
-      try {
-        await slack.chat.postMessage({ channel: userId, text });
+        if (!channelId) return;
+        await slack.chat.postMessage({ channel: channelId, text });
       } catch {
         // ignore
       }

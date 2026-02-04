@@ -43,14 +43,16 @@ model Project {
   endDate     DateTime?
   createdAt   DateTime  @default(now())
 
-  // ✅ NOVO
+  // ✅ criador do projeto
+  createdBySlackId String?
+
   status      ProjectStatus @default(active)
   concludedAt DateTime?
 
-  tasks Task[]
-
+  tasks   Task[]
   members ProjectMember[]
 
+  @@index([createdBySlackId])
   @@map("projects")
 }
 
@@ -75,42 +77,38 @@ model Task {
   title       String
   description String?
 
-  // quem delegou (Slack)
   delegation      String
   delegationEmail String?
 
-  // responsável (Slack)
   responsible      String
   responsibleEmail String?
 
-  // data
-  term DateTime?
-
-  // horário do prazo (ex: "18:30") — opcional
+  term         DateTime?
   deadlineTime String?
 
-  // status
-  status TaskStatus @default(pending)
-
-  // recorrência (opcional)
+  status     TaskStatus  @default(pending)
   recurrence Recurrence?
 
   urgency   Urgency
   createdAt DateTime @default(now())
 
-  // vínculo com projeto (opcional)
+  // ✅ IMPORTANTE: default pra não quebrar dados antigos
+  updatedAt DateTime @default(now()) @updatedAt
+
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   carbonCopies TaskCarbonCopy[]
+  reminders    TaskReminderLog[]
 
-  // ✅ NOVO: logs de lembretes (evita duplicar notificações)
-  reminders TaskReminderLog[]
+  recurrenceAnchor   DateTime?
+  dependsOnId        String?
+  dependsOn          Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
+  dependents         Task[]    @relation("TaskDependsOn")
 
-  recurrenceAnchor DateTime?
-  dependsOnId      String?
-  dependsOn        Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
-  dependents       Task[]    @relation("TaskDependsOn")
+  // ✅ thread da abertura (pra reminders)
+  slackOpenChannelId String?
+  slackOpenMessageTs String?
 
   @@map("tasks")
 }
@@ -131,18 +129,14 @@ model TaskCarbonCopy {
   @@map("task-carbon-copies")
 }
 
-// ✅ NOVO: log de lembretes enviados
 model TaskReminderLog {
   id String @id @default(uuid())
 
   taskId String
   task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
-  // data “do lembrete” no fuso SP: "YYYY-MM-DD"
   dateIso String
-
-  // slot do lembrete: ex "L_10:00", "A_12:00", "T_16:30"
-  slot String
+  slot    String
 
   createdAt DateTime @default(now())
 

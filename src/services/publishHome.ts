@@ -76,20 +76,34 @@ type RawTask = {
 export async function publishHome(slack: WebClient, userId: string) {
   const userSlackId = userId;
 
+  // =========================================================
+  // 0) ROLLOVER + NOTIFY (replanejadas)
+  // =========================================================
   try {
-    const result = await rolloverOverdueTasksForResponsible(userSlackId);
+    // ✅ FIX 1: essa função espera { slackUserId }
+    const result = await rolloverOverdueTasksForResponsible({ slackUserId: userSlackId });
 
-    if (result.ran && result.moved?.length) {
+    // ✅ FIX 2: o retorno não tem "ran", então checa só moved
+    if (result?.moved?.length) {
       await notifyTasksReplanned({
         slack,
         responsibleSlackId: userSlackId,
-        items: result.moved,
+        items: result.moved.map((m: any) => ({
+          taskId: String(m.taskId ?? m.id ?? ""), // ✅ obrigatório
+          taskTitle: m.title ?? m.taskTitle ?? "",
+          fromIso: m.fromIso,
+          toIso: m.toIso,
+        })),
       });
+
     }
   } catch (e) {
     console.error("[publishHome] rollover/notify replanned failed:", e);
   }
 
+  // =========================================================
+  // 1) Datas base
+  // =========================================================
   const now = new Date();
   const todayIso = getSaoPauloTodayIso(now);
   const todayUtc = new Date(`${todayIso}T00:00:00.000Z`);
@@ -99,7 +113,9 @@ export async function publishHome(slack: WebClient, userId: string) {
     OR: [{ dependsOnId: null }, { dependsOn: { status: "done" } }],
   };
 
-  // 1) Minhas tarefas
+  // =========================================================
+  // 2) Minhas tarefas (responsible)
+  // =========================================================
   const myTasks = (await prisma.task.findMany({
     where: {
       responsible: userSlackId,
@@ -122,21 +138,51 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasksOverdue = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "overdue")
-    .map((t) => ({ id: t.id, title: t.title, description: t.description, delegation: t.delegation, term: t.term, urgency: t.urgency }));
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      delegation: t.delegation,
+      term: t.term,
+      urgency: t.urgency,
+    }));
 
   const tasksToday = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "today")
-    .map((t) => ({ id: t.id, title: t.title, description: t.description, delegation: t.delegation, term: t.term, urgency: t.urgency }));
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      delegation: t.delegation,
+      term: t.term,
+      urgency: t.urgency,
+    }));
 
   const tasksTomorrow = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "tomorrow")
-    .map((t) => ({ id: t.id, title: t.title, description: t.description, delegation: t.delegation, term: t.term, urgency: t.urgency }));
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      delegation: t.delegation,
+      term: t.term,
+      urgency: t.urgency,
+    }));
 
   const tasksFuture = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "future")
-    .map((t) => ({ id: t.id, title: t.title, description: t.description, delegation: t.delegation, term: t.term, urgency: t.urgency }));
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      delegation: t.delegation,
+      term: t.term,
+      urgency: t.urgency,
+    }));
 
-  // 2) Delegadas por mim
+  // =========================================================
+  // 3) Delegadas por mim (delegation)
+  // =========================================================
   const delegated = (await prisma.task.findMany({
     where: {
       delegation: userSlackId,
@@ -146,13 +192,23 @@ export async function publishHome(slack: WebClient, userId: string) {
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: { id: true, title: true, term: true, urgency: true, responsible: true },
     take: 40,
-  })) as unknown as Array<{ id: string; title: string; term: Date | null; urgency: "light" | "asap" | "turbo"; responsible: string }>;
+  })) as unknown as Array<{
+    id: string;
+    title: string;
+    term: Date | null;
+    urgency: "light" | "asap" | "turbo";
+    responsible: string;
+  }>;
 
   const delegatedToday = delegated.filter((t) => bucketByIso(t.term, todayIso) === "today");
   const delegatedTomorrow = delegated.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
-  const delegatedFuture = delegated.filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue");
+  const delegatedFuture = delegated.filter(
+    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
+  );
 
-  // 3) Em cópia
+  // =========================================================
+  // 4) Em cópia (carbonCopies)
+  // =========================================================
   const ccTasks = (await prisma.task.findMany({
     where: {
       status: { not: "done" },
@@ -162,13 +218,24 @@ export async function publishHome(slack: WebClient, userId: string) {
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: { id: true, title: true, term: true, urgency: true, responsible: true, delegation: true },
     take: 40,
-  })) as unknown as Array<{ id: string; title: string; term: Date | null; urgency: "light" | "asap" | "turbo"; responsible: string; delegation: string | null }>;
+  })) as unknown as Array<{
+    id: string;
+    title: string;
+    term: Date | null;
+    urgency: "light" | "asap" | "turbo";
+    responsible: string;
+    delegation: string | null;
+  }>;
 
   const ccToday = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today");
   const ccTomorrow = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
-  const ccFuture = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue");
+  const ccFuture = ccTasks.filter(
+    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
+  );
 
-  // 4) Recorrências (lista)
+  // =========================================================
+  // 5) Recorrências (lista)
+  // =========================================================
   const recurrenceTasks = (await prisma.task.findMany({
     where: {
       responsible: userSlackId,
@@ -181,7 +248,9 @@ export async function publishHome(slack: WebClient, userId: string) {
     take: 15,
   })) as unknown as Array<{ id: string; title: string; recurrence: string }>;
 
-  // 5) Projetos
+  // =========================================================
+  // 6) Projetos
+  // =========================================================
   const projects = await prisma.project.findMany({
     where: { status: "active", members: { some: { slackUserId: userSlackId } } },
     orderBy: { createdAt: "desc" },
@@ -193,13 +262,23 @@ export async function publishHome(slack: WebClient, userId: string) {
       const [openCount, doneCount, overdueCount] = await Promise.all([
         prisma.task.count({ where: { projectId: p.id, status: { not: "done" }, AND: [visibleWhere] } }),
         prisma.task.count({ where: { projectId: p.id, status: "done" } }),
-        prisma.task.count({ where: { projectId: p.id, status: { not: "done" }, term: { lt: todayUtc }, AND: [visibleWhere] } }),
+        prisma.task.count({
+          where: {
+            projectId: p.id,
+            status: { not: "done" },
+            term: { lt: todayUtc },
+            AND: [visibleWhere],
+          },
+        }),
       ]);
 
       return { id: p.id, name: p.name, openCount, doneCount, overdueCount };
     })
   );
 
+  // =========================================================
+  // 7) Render Home
+  // =========================================================
   const blocks = homeHeaderActionsBlocks().concat(
     homeTasksBlocks({
       tasksOverdue,
@@ -207,13 +286,52 @@ export async function publishHome(slack: WebClient, userId: string) {
       tasksTomorrow,
       tasksFuture,
 
-      delegatedToday: delegatedToday.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible })),
-      delegatedTomorrow: delegatedTomorrow.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible })),
-      delegatedFuture: delegatedFuture.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible })),
+      delegatedToday: delegatedToday.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+      })),
+      delegatedTomorrow: delegatedTomorrow.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+      })),
+      delegatedFuture: delegatedFuture.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+      })),
 
-      ccToday: ccToday.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible, delegation: t.delegation })),
-      ccTomorrow: ccTomorrow.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible, delegation: t.delegation })),
-      ccFuture: ccFuture.map((t) => ({ id: t.id, title: t.title, term: t.term, urgency: t.urgency, responsible: t.responsible, delegation: t.delegation })),
+      ccToday: ccToday.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+        delegation: t.delegation,
+      })),
+      ccTomorrow: ccTomorrow.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+        delegation: t.delegation,
+      })),
+      ccFuture: ccFuture.map((t) => ({
+        id: t.id,
+        title: t.title,
+        term: t.term,
+        urgency: t.urgency,
+        responsible: t.responsible,
+        delegation: t.delegation,
+      })),
 
       recurrences: recurrenceTasks.map((r) => ({ id: r.id, title: r.title, recurrence: r.recurrence })),
 

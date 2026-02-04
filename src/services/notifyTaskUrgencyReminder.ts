@@ -1,6 +1,14 @@
 // src/services/notifyTaskUrgencyReminder.ts
 import type { WebClient } from "@slack/web-api";
 
+/**
+ * ✅ Reminders devem ir como reply na *thread* da mensagem de abertura da task
+ * (root message enviada em notifyTaskCreated).
+ *
+ * Este arquivo NÃO usa conversations.history / conversations.replies, então NÃO
+ * exige scopes *:history.
+ */
+
 const dmCache = new Map<string, { channelId: string; ts: number }>();
 const DM_CACHE_TTL_MS = 1000 * 60 * 60 * 6; // 6h
 
@@ -22,29 +30,44 @@ function fmtDatePt(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+function mention(id: string) {
+  return `<@${id}>`;
+}
+
+export type ReminderTask = {
+  id: string;
+  title: string;
+  responsibleSlackId: string;
+  deadlineTime?: string | null;
+
+  // thread da abertura (root message enviada no notifyTaskCreated)
+  slackOpenChannelId: string | null;
+  slackOpenMessageTs: string | null;
+};
+
 export async function notifyTaskUrgencyReminder(args: {
   slack: WebClient;
-  responsibleSlackId: string;
   dateIso: string; // YYYY-MM-DD (SP)
-  slot: string;    // ex: "L_10:00"
-  tasks: Array<{ title: string; deadlineTime?: string | null }>;
+  slot: string; // ex: "TURBO_09:00" / "ASAP_12:00" / "LIGHT_16:00" (pra log/dedup)
+  task: ReminderTask;
 }) {
-  const { slack, responsibleSlackId, dateIso, tasks } = args;
-  if (!tasks.length) return;
+  const { slack, dateIso, task } = args;
 
-  const channel = await openDm(slack, responsibleSlackId);
+  const time = task.deadlineTime ? ` às *${task.deadlineTime}*` : "";
+  const text = `⏰ ${mention(task.responsibleSlackId)} lembrete (${fmtDatePt(dateIso)}): *${task.title}* ainda está pendente.${time}`;
 
-  const header = `⏰ Lembrete (${fmtDatePt(dateIso)}): você tem ${tasks.length} tarefa(s) pendente(s).`;
+  // ✅ Preferência: postar dentro da thread da abertura
+  if (task.slackOpenChannelId && task.slackOpenMessageTs) {
+    await slack.chat.postMessage({
+      channel: task.slackOpenChannelId,
+      thread_ts: task.slackOpenMessageTs,
+      text,
+      reply_broadcast: false,
+    });
+    return;
+  }
 
-  const lines = tasks.slice(0, 20).map((t) => {
-    const time = t.deadlineTime ? ` às *${t.deadlineTime}*` : "";
-    return `• *${t.title}*${time}`;
-  });
-
-  const suffix = tasks.length > 20 ? `\n… +${tasks.length - 20} tarefa(s).` : "";
-
-  await slack.chat.postMessage({
-    channel,
-    text: `${header}\n${lines.join("\n")}${suffix}`,
-  });
+  // Fallback: manda DM "solta" (pra não perder lembrete)
+  const channel = await openDm(slack, task.responsibleSlackId);
+  await slack.chat.postMessage({ channel, text });
 }

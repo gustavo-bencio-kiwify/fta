@@ -6,9 +6,9 @@ export const TASK_DETAILS_MODAL_TITLE = "Detalhes da Tarefa" as const;
 type Urgency = "light" | "asap" | "turbo";
 
 function urgencyLabel(u: Urgency) {
-  if (u === "light") return "🟢 LIGHT";
+  if (u === "light") return "🟢 Light";
   if (u === "asap") return "🟡 ASAP";
-  return "🔴 TURBO";
+  return "🔴 Turbo";
 }
 
 function formatDateBRFromIso(iso?: string | null) {
@@ -37,17 +37,16 @@ export function taskDetailsModalView(args: {
   const recurrenceText = args.recurrence ?? "—";
 
   const blocks: View["blocks"] = [
-    { type: "section", text: { type: "mrkdwn", text: `🔎 *${TASK_DETAILS_MODAL_TITLE}*` } },
     { type: "section", text: { type: "mrkdwn", text: `📌 *${args.title}*` } },
     {
       type: "section",
       fields: [
-        { type: "mrkdwn", text: `*Responsável:*\n<@${args.responsibleSlackId}>` },
-        { type: "mrkdwn", text: `*Delegado por:*\n${delegatedText}` },
+        { type: "mrkdwn", text: `*Responsável:*\n<@${args.responsibleSlackId}>\n\n` },
+        { type: "mrkdwn", text: `*Delegado por:*\n${delegatedText}\n\n` },
         { type: "mrkdwn", text: `*Prazo:*\n${dueText}` },
-        { type: "mrkdwn", text: `*Urgência:*\n${urgencyLabel(args.urgency)}` },
-        { type: "mrkdwn", text: `*Recorrência:*\n${recurrenceText}` },
-        { type: "mrkdwn", text: `*Projeto:*\n${projectText}` },
+        { type: "mrkdwn", text: `*Urgência:*\n${urgencyLabel(args.urgency)}\n\n` },
+        { type: "mrkdwn", text: `*Recorrência:*\n${recurrenceText}\n\n` },
+        { type: "mrkdwn", text: `*Projeto:*\n${projectText}\n\n` },
       ],
     },
   ];

@@ -14,8 +14,33 @@ function mention(id: string) {
   return `<@${id}>`;
 }
 
+function uniq(ids: Array<string | null | undefined>) {
+  return Array.from(new Set(ids.filter(Boolean))) as string[];
+}
+
+function buildAlignThreadText(args: {
+  responsibleSlackId: string;
+  delegationSlackId: string | null;
+  carbonCopiesSlackIds: string[];
+}) {
+  const { responsibleSlackId, delegationSlackId, carbonCopiesSlackIds } = args;
+
+  const all = uniq([
+    responsibleSlackId,
+    delegationSlackId,
+    ...(carbonCopiesSlackIds ?? []),
+  ]);
+
+  const mentions = all.map(mention).join(", ");
+
+  // ✅ exatamente como você pediu:
+  // "🗨️<Responsável>, <Delegador>, <Cópias>, Alinhem aqui caso necessário."
+  // (sem cópias se não tiver; sem delegador se null)
+  return `🗨️ ${mentions}, alinhem aqui caso necessário.`;
+}
+
 async function openGroupDm(slack: WebClient, userIds: string[]) {
-  const users = userIds.join(",");
+  const users = uniq(userIds).join(",");
   const conv = await slack.conversations.open({ users });
   const channelId = conv.channel?.id;
   if (!channelId) throw new Error("Could not open group DM channel");
@@ -29,34 +54,66 @@ async function openDm(slack: WebClient, userId: string) {
   return channelId;
 }
 
-export async function notifyTaskRescheduledGroup(args: NotifyTaskRescheduledGroupArgs) {
-  const { slack, responsibleSlackId, delegationSlackId, carbonCopiesSlackIds, taskTitle, newDateBr } = args;
+async function postWithThread(slack: WebClient, channel: string, rootText: string, threadText: string) {
+  const root = await slack.chat.postMessage({
+    channel,
+    text: rootText,
+  });
 
-  const participants = Array.from(
-    new Set([responsibleSlackId, delegationSlackId, ...(carbonCopiesSlackIds ?? [])].filter(Boolean))
-  ) as string[];
+  const threadTs = root.ts;
+  if (!threadTs) return;
+
+  await slack.chat.postMessage({
+    channel,
+    text: threadText,
+    thread_ts: threadTs,
+  });
+}
+
+export async function notifyTaskRescheduledGroup(args: NotifyTaskRescheduledGroupArgs) {
+  const {
+    slack,
+    responsibleSlackId,
+    delegationSlackId,
+    carbonCopiesSlackIds,
+    taskTitle,
+    newDateBr,
+  } = args;
+
+  // participantes: responsável + delegador + CCs (sem duplicar)
+  const participants = uniq([
+    responsibleSlackId,
+    delegationSlackId,
+    ...(carbonCopiesSlackIds ?? []),
+  ]);
 
   if (!participants.length) return;
 
-  const text =
-    `📅 ${mention(responsibleSlackId)} reprogramou a atividade *${taskTitle}* para *${newDateBr}*\n\n` +
-    `🗨️ Alinhem aqui caso necessário.`;
+  // ✅ Mensagem raiz (normal)
+  const rootText = `📅 ${mention(responsibleSlackId)} reprogramou a atividade *${taskTitle}* para *${newDateBr}*`;
+
+  // ✅ Mensagem na thread (com mentions)
+  const threadText = buildAlignThreadText({
+    responsibleSlackId,
+    delegationSlackId,
+    carbonCopiesSlackIds,
+  });
 
   // ✅ tenta MPIM
   try {
     const channelId = await openGroupDm(slack, participants);
-    await slack.chat.postMessage({ channel: channelId, text });
+    await postWithThread(slack, channelId, rootText, threadText);
     return;
   } catch (e) {
     console.error("[notifyTaskRescheduledGroup] openGroupDm failed, falling back to DMs:", e);
   }
 
-  // fallback: DMs individuais (não falha por falta de scope mpim)
+  // fallback: DMs individuais
   await Promise.allSettled(
     participants.map(async (uid) => {
       try {
         const channelId = await openDm(slack, uid);
-        await slack.chat.postMessage({ channel: channelId, text });
+        await postWithThread(slack, channelId, rootText, threadText);
       } catch (e) {
         console.error("[notifyTaskRescheduledGroup] DM failed:", { uid, e });
       }
