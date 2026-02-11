@@ -1,7 +1,6 @@
 // src/server.ts
 import { fastify } from "fastify";
 import "dotenv/config";
-
 import { createTask } from "./routes/createTask";
 import { slackRoutes } from "./routes/slackRoutes";
 import { debug } from "./routes/debugTables";
