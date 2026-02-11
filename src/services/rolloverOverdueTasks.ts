@@ -11,8 +11,8 @@ type MovedItem = {
 const SAO_PAULO_TZ = "America/Sao_Paulo";
 
 // ✅ ALTERE AQUI O HORÁRIO DE CORTE (pra teste)
-const CUTOFF_HOUR = 17;
-const CUTOFF_MINUTE = 48; // 17:35
+const CUTOFF_HOUR = 20;
+const CUTOFF_MINUTE = 0; // 17:35
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
