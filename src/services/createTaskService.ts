@@ -2,8 +2,10 @@
 import { prisma } from "../lib/prisma";
 import { createTaskSchema, CreateTaskInput } from "../schema/taskSchema";
 import { Recurrence } from "../generated/prisma/enums";
+import { syncCalendarEventForTask } from "./googleCalendar";
+import { getSlackUserEmail } from "./slackUserEmail";
 
-const SP_OFFSET_HOURS = 3; // SP é UTC-3 (sem DST atualmente)
+const SP_OFFSET_HOURS = 3;
 
 // YYYY-MM-DD -> salva como 00:00 SP (== 03:00Z)
 function dateIsoToSpMidnightUtc(dateIso: string): Date | null {
@@ -35,7 +37,6 @@ function normalizeTerm(term: CreateTaskInput["term"]) {
     if (isUtcMidnight) {
       return new Date(term.getTime() + SP_OFFSET_HOURS * 60 * 60 * 1000);
     }
-
     return term;
   }
 
@@ -70,37 +71,58 @@ export async function createTaskService(raw: unknown) {
   const term = normalizeTerm(data.term);
   const recurrence = normalizeRecurrence(data.recurrence);
 
+  // ✅ busca emails no Slack antes de salvar (pra o Calendar pegar depois)
+  const [delegationEmail, responsibleEmail] = await Promise.all([
+    getSlackUserEmail(data.delegation).catch(() => null),
+    getSlackUserEmail(data.responsible).catch(() => null),
+  ]);
+
+  const carbonCopiesData = await Promise.all(
+    (data.carbonCopies ?? []).map(async (id) => ({
+      slackUserId: id,
+      email: await getSlackUserEmail(id).catch(() => null),
+    }))
+  );
+
   const task = await prisma.task.create({
     data: {
       title: data.title.trim(),
       description: data.description?.trim() ? data.description.trim() : null,
 
       delegation: data.delegation,
+      delegationEmail,
+
       responsible: data.responsible,
+      responsibleEmail,
 
       term,
       deadlineTime: data.deadlineTime ?? null,
       recurrence,
       projectId: data.projectId ?? null,
 
-      // ✅ NOVO
       dependsOnId: data.dependsOnId ?? null,
-
       recurrenceAnchor: recurrence ? term : null,
 
       urgency: data.urgency,
       status: "pending",
 
-      ...(data.carbonCopies.length
+      ...(carbonCopiesData.length
         ? {
-            carbonCopies: {
-              createMany: { data: data.carbonCopies.map((id) => ({ slackUserId: id })) },
-            },
-          }
+          carbonCopies: {
+            createMany: { data: carbonCopiesData },
+          },
+        }
         : {}),
     },
     include: { carbonCopies: true },
   });
 
+  // ✅ cria evento no Google Calendar (não trava criação da task)
+  // ✅ Calendar: cria/atualiza evento (não trava criação da task)
+  if (task.term) {
+    syncCalendarEventForTask(task.id).catch((e) => {
+      console.error("[calendar] failed to sync after create:", task.id, e);
+    });
+  }
   return task;
 }

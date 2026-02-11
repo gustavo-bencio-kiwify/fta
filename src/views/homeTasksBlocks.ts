@@ -217,11 +217,14 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "my_tasks_actions",
     elements: [
-      { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
+      {
+        type: "button",
+        text: { type: "plain_text", text: "✅ Concluir selecionadas" },
+        action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
+        value: "conclude_selected",
+      },
       { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
-
-      // ✅ importante: value fixo (não existe `task` aqui)
       { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
     ],
   });
@@ -262,7 +265,9 @@ export function homeTasksBlocks(args: {
   blocks.push({
     type: "actions",
     block_id: "cc_actions",
-    elements: [{ type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" }],
+    elements: [
+      { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
+    ],
   });
   pushDivider();
 
@@ -294,7 +299,10 @@ export function homeTasksBlocks(args: {
       ...args.projects.flatMap((p) => [
         {
           type: "section",
-          text: { type: "mrkdwn", text: `*${p.name}*\n${p.openCount} abertas • ${p.doneCount} concluídas • ${p.overdueCount} atrasadas` },
+          text: {
+            type: "mrkdwn",
+            text: `*${p.name}*\n${p.openCount} abertas • ${p.doneCount} concluídas • ${p.overdueCount} atrasadas`,
+          },
         } as KnownBlock,
         {
           type: "actions",
@@ -311,6 +319,16 @@ export function homeTasksBlocks(args: {
   } else {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } });
   }
+
+  // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
+  // Ajuste o número (10/12/15/20) conforme necessário
+  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
+    type: "context",
+    block_id: `bottom_pad_${i}`,
+    elements: [{ type: "mrkdwn", text: " " }],
+  })) as KnownBlock[];
+
+  blocks.push(...bottomPadBlocks);
 
   return blocks;
 }

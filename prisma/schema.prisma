@@ -109,6 +109,8 @@ model Task {
   // ✅ thread da abertura (pra reminders)
   slackOpenChannelId String?
   slackOpenMessageTs String?
+  googleEventId   String?
+  googleEventLink String?
 
   @@map("tasks")
 }
@@ -144,4 +146,18 @@ model TaskReminderLog {
   @@index([dateIso, slot])
   @@index([taskId])
   @@map("task-reminder-logs")
+}
+
+model GoogleOAuthToken {
+  id           String   @id // vamos usar "default" como chave única
+  refreshToken String
+  accessToken  String?
+  scope        String?
+  tokenType    String?
+  expiryDate   DateTime? // quando expira o access_token
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("google-oauth-tokens")
 }

@@ -1,5 +1,6 @@
 // src/services/updateTaskService.ts
 import { prisma } from "../lib/prisma";
+import { syncCalendarEventForTask } from "./googleCalendar";
 
 function toSaoPauloMidnightDate(termIso: string) {
   // iso: YYYY-MM-DD
@@ -11,12 +12,12 @@ function toSaoPauloMidnightDate(termIso: string) {
  * Recurrence no banco é enum.
  * Aqui tratamos como string vinda do modal.
  * - "none" / "" / null => null
- * - qualquer outro valor => set (cast como any pra não brigar com enum types)
+ * - qualquer outro valor => set
  */
-function buildRecurrenceUpdate(input: string | null) {
+function normalizeRecurrence(input: string | null): string | null {
   const v = (input ?? "").trim();
   if (!v || v === "none") return null;
-  return { set: v as any } as any;
+  return v;
 }
 
 /**
@@ -31,6 +32,7 @@ const TASK_SELECT = {
   term: true,
   deadlineTime: true,
   recurrence: true,
+  recurrenceAnchor: true,
   urgency: true,
   createdAt: true,
   carbonCopies: { select: { slackUserId: true } },
@@ -40,11 +42,12 @@ type TaskSelected = {
   id: string;
   title: string;
   description: string | null;
-  delegation: string | null;
+  delegation: string;
   responsible: string;
   term: Date | null;
   deadlineTime: string | null;
   recurrence: any;
+  recurrenceAnchor: Date | null;
   urgency: any;
   createdAt: Date;
   carbonCopies: { slackUserId: string }[];
@@ -54,7 +57,7 @@ type TaskSnapshot = {
   id: string;
   title: string;
   description: string | null;
-  delegation: string | null;
+  delegation: string;
   responsible: string;
   term: Date | null;
   deadlineTime: string | null;
@@ -76,7 +79,7 @@ function toSnapshot(t: TaskSelected): TaskSnapshot {
     recurrence: t.recurrence ? String(t.recurrence) : null,
     urgency: t.urgency ? String(t.urgency) : "light",
     createdAt: t.createdAt,
-    carbonCopies: (t.carbonCopies ?? []).map((c: { slackUserId: string }) => c.slackUserId),
+    carbonCopies: (t.carbonCopies ?? []).map((c) => c.slackUserId),
   };
 }
 
@@ -120,7 +123,7 @@ export async function updateTaskService(args: {
   const newTime = deadlineTime?.trim() ? deadlineTime.trim() : null;
 
   const newCc = Array.from(new Set((carbonCopiesSlackIds ?? []).filter(Boolean)));
-  const recurrenceUpdate = buildRecurrenceUpdate(recurrence);
+  const recurrenceValue = normalizeRecurrence(recurrence);
 
   const afterRaw = await prisma.task.update({
     where: { id: taskId },
@@ -131,7 +134,10 @@ export async function updateTaskService(args: {
       deadlineTime: newTime,
 
       responsible: responsibleSlackId,
-      recurrence: recurrenceUpdate as any,
+      recurrence: recurrenceValue as any,
+
+      // ✅ mantém regra: se recorrente, ancora no term; se não, null
+      recurrenceAnchor: recurrenceValue ? newTerm : null,
 
       // 🔁 substitui CCs
       carbonCopies: {
@@ -143,6 +149,11 @@ export async function updateTaskService(args: {
   });
 
   const after = afterRaw as unknown as TaskSelected;
+
+  // ✅ sync do calendário (não bloqueia a resposta do Slack)
+  void syncCalendarEventForTask(taskId).catch((e) => {
+    console.error("[calendar] sync failed (updateTaskService):", taskId, e);
+  });
 
   return {
     before: toSnapshot(before),

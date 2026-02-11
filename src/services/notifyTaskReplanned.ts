@@ -3,15 +3,19 @@ import type { WebClient } from "@slack/web-api";
 import { prisma } from "../lib/prisma";
 
 type ReplannedItem = {
-  taskId: string;     // ✅ novo
+  taskId: string; // ✅ novo
   taskTitle: string;
   fromIso: string; // YYYY-MM-DD
-  toIso: string;   // YYYY-MM-DD
+  toIso: string; // YYYY-MM-DD
 };
 
 function formatPtBr(iso: string) {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}`;
+}
+
+function mention(userId: string) {
+  return `<@${userId}>`;
 }
 
 async function openDmChannel(slack: WebClient, userId: string) {
@@ -32,7 +36,9 @@ export async function notifyTasksReplanned(args: {
   for (const it of items) {
     const from = formatPtBr(it.fromIso);
     const to = formatPtBr(it.toIso);
-    const text = `🔁 *${it.taskTitle}*: prazo mudou de *${from}* para *${to}*.`;
+
+    // ✅ menciona o responsável
+    const text = `🔁 ${mention(responsibleSlackId)} *${it.taskTitle}*: prazo mudou de *${from}* para *${to}*.`;
 
     // ✅ tenta postar na thread da abertura
     const task = await prisma.task.findUnique({

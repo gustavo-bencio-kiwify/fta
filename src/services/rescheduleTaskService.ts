@@ -1,15 +1,10 @@
 // src/services/rescheduleTaskService.ts
 import { prisma } from "../lib/prisma";
+import { syncCalendarEventForTask } from "./googleCalendar";
 
-/**
- * Salva a data como "meio-dia UTC" do dia escolhido.
- * Isso impede o problema do Brasil (UTC-3) de aparecer como dia anterior.
- */
-function normalizeTermFromIso(dateIso: string | null | undefined): Date | null {
-  if (!dateIso) return null;
-
-  // YYYY-MM-DD -> 12:00Z
-  const d = new Date(`${dateIso}T12:00:00.000Z`);
+function toSaoPauloMidnightDate(termIso: string) {
+  // YYYY-MM-DD -> 00:00 SP (== 03:00Z)
+  const d = new Date(`${termIso}T03:00:00.000Z`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -20,7 +15,7 @@ export async function rescheduleTaskService(args: {
   newDateIso: string; // YYYY-MM-DD
   newTime?: string | null; // "HH:MM" | null
 }) {
-  const term = normalizeTermFromIso(args.newDateIso);
+  const term = toSaoPauloMidnightDate(args.newDateIso);
 
   const task = await prisma.task.findUnique({
     where: { id: args.taskId },
@@ -31,12 +26,12 @@ export async function rescheduleTaskService(args: {
       delegation: true,
       term: true,
       deadlineTime: true,
+      recurrence: true,
     },
   });
 
   if (!task) throw new Error("Task not found");
 
-  // responsável OU delegador podem reprogramar
   const can = task.responsible === args.requesterSlackId || task.delegation === args.requesterSlackId;
   if (!can) throw new Error("Not allowed");
 
@@ -45,6 +40,9 @@ export async function rescheduleTaskService(args: {
     data: {
       term,
       deadlineTime: args.newTime?.trim() ? args.newTime.trim() : null,
+
+      // se for recorrente, mantém anchor alinhado
+      recurrenceAnchor: task.recurrence ? term : null,
     },
     select: {
       id: true,
@@ -54,6 +52,10 @@ export async function rescheduleTaskService(args: {
       term: true,
       deadlineTime: true,
     },
+  });
+
+  void syncCalendarEventForTask(args.taskId).catch((e) => {
+    console.error("[calendar] sync failed (rescheduleTaskService):", args.taskId, e);
   });
 
   return { before: task, after: updated };

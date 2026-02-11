@@ -11,6 +11,9 @@ import type { Prisma } from "../generated/prisma/browser";
 
 const SAO_PAULO_TZ = "America/Sao_Paulo";
 
+// ✅ ajuda a evitar Slack cortar o final (projetos some quando excede blocks)
+const MAX_TASKS_PER_SECTION = 8;
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -65,7 +68,7 @@ type RawTask = {
   id: string;
   title: string;
   description: string | null;
-  delegation: string | null;
+  delegation: string; // no seu schema é obrigatório
   responsible: string;
   term: Date | null;
   urgency: "light" | "asap" | "turbo";
@@ -80,22 +83,19 @@ export async function publishHome(slack: WebClient, userId: string) {
   // 0) ROLLOVER + NOTIFY (replanejadas)
   // =========================================================
   try {
-    // ✅ FIX 1: essa função espera { slackUserId }
     const result = await rolloverOverdueTasksForResponsible({ slackUserId: userSlackId });
 
-    // ✅ FIX 2: o retorno não tem "ran", então checa só moved
     if (result?.moved?.length) {
       await notifyTasksReplanned({
         slack,
         responsibleSlackId: userSlackId,
         items: result.moved.map((m: any) => ({
-          taskId: String(m.taskId ?? m.id ?? ""), // ✅ obrigatório
+          taskId: String(m.taskId ?? m.id ?? ""),
           taskTitle: m.title ?? m.taskTitle ?? "",
           fromIso: m.fromIso,
           toIso: m.toIso,
         })),
       });
-
     }
   } catch (e) {
     console.error("[publishHome] rollover/notify replanned failed:", e);
@@ -113,6 +113,14 @@ export async function publishHome(slack: WebClient, userId: string) {
     OR: [{ dependsOnId: null }, { dependsOn: { status: "done" } }],
   };
 
+  // ✅ Regra pedida:
+  // Se delegador == responsável (mesmo usuário), NÃO aparece em "Minhas tarefas"
+  // e aparece só em "Você delegou".
+  // No seu schema delegation NÃO é null, então o filtro é simples.
+  const excludeSelfDelegatedFromResponsible: Prisma.TaskWhereInput = {
+    delegation: { not: userSlackId },
+  };
+
   // =========================================================
   // 2) Minhas tarefas (responsible)
   // =========================================================
@@ -120,7 +128,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     where: {
       responsible: userSlackId,
       status: { not: "done" },
-      AND: [visibleWhere],
+      AND: [visibleWhere, excludeSelfDelegatedFromResponsible],
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: {
@@ -138,6 +146,7 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasksOverdue = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "overdue")
+    .slice(0, MAX_TASKS_PER_SECTION)
     .map((t) => ({
       id: t.id,
       title: t.title,
@@ -149,6 +158,7 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasksToday = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "today")
+    .slice(0, MAX_TASKS_PER_SECTION)
     .map((t) => ({
       id: t.id,
       title: t.title,
@@ -160,6 +170,7 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasksTomorrow = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "tomorrow")
+    .slice(0, MAX_TASKS_PER_SECTION)
     .map((t) => ({
       id: t.id,
       title: t.title,
@@ -171,6 +182,7 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   const tasksFuture = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "future")
+    .slice(0, MAX_TASKS_PER_SECTION)
     .map((t) => ({
       id: t.id,
       title: t.title,
@@ -191,7 +203,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: { id: true, title: true, term: true, urgency: true, responsible: true },
-    take: 40,
+    take: 60,
   })) as unknown as Array<{
     id: string;
     title: string;
@@ -200,11 +212,17 @@ export async function publishHome(slack: WebClient, userId: string) {
     responsible: string;
   }>;
 
-  const delegatedToday = delegated.filter((t) => bucketByIso(t.term, todayIso) === "today");
-  const delegatedTomorrow = delegated.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
-  const delegatedFuture = delegated.filter(
-    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
-  );
+  const delegatedToday = delegated
+    .filter((t) => bucketByIso(t.term, todayIso) === "today")
+    .slice(0, MAX_TASKS_PER_SECTION);
+
+  const delegatedTomorrow = delegated
+    .filter((t) => bucketByIso(t.term, todayIso) === "tomorrow")
+    .slice(0, MAX_TASKS_PER_SECTION);
+
+  const delegatedFuture = delegated
+    .filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue")
+    .slice(0, MAX_TASKS_PER_SECTION);
 
   // =========================================================
   // 4) Em cópia (carbonCopies)
@@ -217,21 +235,21 @@ export async function publishHome(slack: WebClient, userId: string) {
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: { id: true, title: true, term: true, urgency: true, responsible: true, delegation: true },
-    take: 40,
+    take: 60,
   })) as unknown as Array<{
     id: string;
     title: string;
     term: Date | null;
     urgency: "light" | "asap" | "turbo";
     responsible: string;
-    delegation: string | null;
+    delegation: string;
   }>;
 
-  const ccToday = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today");
-  const ccTomorrow = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
-  const ccFuture = ccTasks.filter(
-    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
-  );
+  const ccToday = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today").slice(0, MAX_TASKS_PER_SECTION);
+  const ccTomorrow = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow").slice(0, MAX_TASKS_PER_SECTION);
+  const ccFuture = ccTasks
+    .filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue")
+    .slice(0, MAX_TASKS_PER_SECTION);
 
   // =========================================================
   // 5) Recorrências (lista)
@@ -241,7 +259,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       responsible: userSlackId,
       status: { not: "done" },
       recurrence: { not: null },
-      AND: [visibleWhere],
+      AND: [visibleWhere, excludeSelfDelegatedFromResponsible],
     },
     orderBy: [{ createdAt: "desc" }],
     select: { id: true, title: true, recurrence: true },
@@ -249,7 +267,7 @@ export async function publishHome(slack: WebClient, userId: string) {
   })) as unknown as Array<{ id: string; title: string; recurrence: string }>;
 
   // =========================================================
-  // 6) Projetos
+  // 6) Projetos (do usuário)
   // =========================================================
   const projects = await prisma.project.findMany({
     where: { status: "active", members: { some: { slackUserId: userSlackId } } },
@@ -338,6 +356,21 @@ export async function publishHome(slack: WebClient, userId: string) {
       projects: projectsWithCounts,
     })
   );
+
+  // ✅ NOVO: força a seção de projetos existir mesmo quando vazio
+  if (!projectsWithCounts.length) {
+    blocks.push(
+      { type: "divider" },
+      { type: "header", text: { type: "plain_text", text: "📁 Projetos que participo" } },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "Você ainda não participa de nenhum projeto.\nUse o botão *📁 Criar Projeto* no topo para começar.",
+        },
+      }
+    );
+  }
 
   await slack.views.publish({
     user_id: userSlackId,

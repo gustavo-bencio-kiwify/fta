@@ -43,7 +43,7 @@ export async function openQuestionThread(args: {
 
   const channelId = await openGroupDm(slack, participants);
 
-  const header = `❓ Dúvida sobre a tarefa *${task.title}*.}`;
+  const header = `❓ Dúvida sobre a tarefa *${task.title}*.`;
   const meta = `UID: \`${task.id}\``;
 
   const blocks: KnownBlock[] = [

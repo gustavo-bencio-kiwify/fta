@@ -2,27 +2,66 @@
 import { prisma } from "../lib/prisma";
 
 type MovedItem = {
-  taskId: string;      // ✅ novo
+  taskId: string;
   title: string;
   fromIso: string;
   toIso: string;
 };
 
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+const SAO_PAULO_TZ = "America/Sao_Paulo";
+
+// ✅ ALTERE AQUI O HORÁRIO DE CORTE (pra teste)
+const CUTOFF_HOUR = 17;
+const CUTOFF_MINUTE = 48; // 17:35
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
 }
 
-function addDays(d: Date, n: number) {
-  const x = new Date(d.getTime());
-  x.setDate(x.getDate() + n);
-  return x;
+function getSaoPauloParts(date = new Date()) {
+  const dtf = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SAO_PAULO_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = dtf.formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+
+  const iso = `${year}-${pad2(month)}-${pad2(day)}`; // YYYY-MM-DD no fuso SP
+  return { year, month, day, hour, minute, iso };
+}
+
+function addDaysIso(iso: string, days: number) {
+  const base = new Date(`${iso}T00:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+// ✅ grava sempre como 00:00 SP (03:00Z) pra não “shiftar” o dia
+function saoPauloIsoToUtcDate(iso: string) {
+  return new Date(`${iso}T03:00:00.000Z`);
 }
 
 export async function rolloverOverdueTasksForResponsible(args: { slackUserId: string }) {
   const { slackUserId } = args;
 
-  const todaySp = new Date();
-  const todayIso = isoDate(todaySp);
+  const nowSp = getSaoPauloParts(new Date());
+  const todayIso = nowSp.iso;
+
+  const nowMinutes = nowSp.hour * 60 + nowSp.minute;
+  const cutoffMinutes = CUTOFF_HOUR * 60 + CUTOFF_MINUTE;
+  const afterCutoff = nowMinutes >= cutoffMinutes;
 
   const tasks = await prisma.task.findMany({
     where: {
@@ -37,26 +76,42 @@ export async function rolloverOverdueTasksForResponsible(args: { slackUserId: st
   const moved: MovedItem[] = [];
 
   for (const t of tasks) {
-    const termIso = t.term ? isoDate(t.term) : null;
-    if (!termIso) continue;
+    if (!t.term) continue;
 
-    if (termIso < todayIso) {
-      const newTerm = addDays(todaySp, 1);
-      const fromIso = termIso;
-      const toIso = isoDate(newTerm);
+    // ✅ compara o "dia" no fuso de SP (não UTC)
+    const termSpIso = getSaoPauloParts(t.term).iso;
+
+    // Regras:
+    // 1) Se está ATRASADA (term < hoje):
+    //    - antes do cutoff: move para HOJE
+    //    - depois do cutoff: move para AMANHÃ
+    if (termSpIso < todayIso) {
+      const toIso = afterCutoff ? addDaysIso(todayIso, 1) : todayIso;
 
       await prisma.task.update({
         where: { id: t.id },
-        data: { term: new Date(`${toIso}T03:00:00.000Z`) },
+        data: { term: saoPauloIsoToUtcDate(toIso) },
       });
 
-      moved.push({
-        taskId: t.id,      // ✅ novo
-        title: t.title,
-        fromIso,
-        toIso,
-      });
+      moved.push({ taskId: t.id, title: t.title, fromIso: termSpIso, toIso });
+      continue;
     }
+
+    // 2) Se é PARA HOJE (term == hoje) e passou do cutoff:
+    //    - move para AMANHÃ
+    if (termSpIso === todayIso && afterCutoff) {
+      const toIso = addDaysIso(todayIso, 1);
+
+      await prisma.task.update({
+        where: { id: t.id },
+        data: { term: saoPauloIsoToUtcDate(toIso) },
+      });
+
+      moved.push({ taskId: t.id, title: t.title, fromIso: termSpIso, toIso });
+      continue;
+    }
+
+    // 3) Futuras: não mexe
   }
 
   return { moved };

@@ -1,119 +1,127 @@
 // src/services/createNextRecurringTaskFromCompleted.ts
 import { prisma } from "../lib/prisma";
 import { Recurrence } from "../generated/prisma/enums";
+import { syncCalendarEventForTask } from "./googleCalendar";
 
-function daysInMonthUtc(year: number, month0: number) {
-  // month0: 0..11
-  return new Date(Date.UTC(year, month0 + 1, 0)).getUTCDate();
+const SAFE_UTC_HOUR = 3;
+
+function toIsoFromDateUTC(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
-function addMonthsKeepDayUtc(base: Date, monthsToAdd: number) {
-  const y = base.getUTCFullYear();
-  const m = base.getUTCMonth();
-  const d = base.getUTCDate();
-
-  const targetMonthIndex = m + monthsToAdd;
-  const targetYear = y + Math.floor(targetMonthIndex / 12);
-  const targetMonth0 = ((targetMonthIndex % 12) + 12) % 12;
-
-  const dim = daysInMonthUtc(targetYear, targetMonth0);
-  const day = Math.min(d, dim); // ✅ regra 1 (último dia do mês)
-  return new Date(Date.UTC(targetYear, targetMonth0, day));
+function toSafeUtcDateFromIso(dateIso: string): Date {
+  return new Date(`${dateIso}T${String(SAFE_UTC_HOUR).padStart(2, "0")}:00:00.000Z`);
 }
 
-function addDaysUtc(base: Date, days: number) {
-  const d = new Date(base.getTime());
+function addMonthsClampedUTC(date: Date, months: number): Date {
+  const y = date.getUTCFullYear();
+  const m = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  const targetMonth = m + months;
+  const firstOfTarget = new Date(Date.UTC(y, targetMonth, 1, SAFE_UTC_HOUR, 0, 0));
+  const lastDayTargetMonth = new Date(Date.UTC(y, targetMonth + 1, 0, SAFE_UTC_HOUR, 0, 0)).getUTCDate();
+
+  const clampedDay = Math.min(day, lastDayTargetMonth);
+  return new Date(
+    Date.UTC(firstOfTarget.getUTCFullYear(), firstOfTarget.getUTCMonth(), clampedDay, SAFE_UTC_HOUR, 0, 0)
+  );
+}
+
+function addDaysUTC(date: Date, days: number): Date {
+  const d = new Date(date.getTime());
   d.setUTCDate(d.getUTCDate() + days);
   return d;
 }
 
-function computeNextAnchor(anchor: Date, recurrence: Recurrence): Date | null {
+function nextTermFromRecurrence(base: Date, recurrence: Recurrence): Date {
   switch (recurrence) {
     case "daily":
-      return addDaysUtc(anchor, 1);
+      return addDaysUTC(base, 1);
     case "weekly":
-      return addDaysUtc(anchor, 7);
+      return addDaysUTC(base, 7);
     case "biweekly":
-      return addDaysUtc(anchor, 14);
+      return addDaysUTC(base, 14);
     case "monthly":
-      return addMonthsKeepDayUtc(anchor, 1);
+      return addMonthsClampedUTC(base, 1);
     case "quarterly":
-      return addMonthsKeepDayUtc(anchor, 3);
+      return addMonthsClampedUTC(base, 3);
     case "semiannual":
-      return addMonthsKeepDayUtc(anchor, 6);
+      return addMonthsClampedUTC(base, 6);
     case "annual":
-      return addMonthsKeepDayUtc(anchor, 12);
+      return addMonthsClampedUTC(base, 12);
     default:
-      return null; // "none" não deve chegar aqui
+      return base;
   }
 }
 
-export async function createNextRecurringTaskFromCompleted(args: {
-  completedTaskId: string;
-}) {
-  const t = await prisma.task.findUnique({
+export async function createNextRecurringTaskFromCompleted(args: { completedTaskId: string }) {
+  const completed = await prisma.task.findUnique({
     where: { id: args.completedTaskId },
     select: {
       id: true,
       title: true,
       description: true,
       delegation: true,
+      delegationEmail: true,
       responsible: true,
+      responsibleEmail: true,
       term: true,
       deadlineTime: true,
       recurrence: true,
-      recurrenceAnchor: true,
-      urgency: true,
       projectId: true,
-      carbonCopies: { select: { slackUserId: true } },
-      status: true,
+      dependsOnId: true,
+      urgency: true,
+      carbonCopies: { select: { slackUserId: true, email: true } },
     },
   });
 
-  if (!t) return null;
-  if (t.status !== "done") return null;
-  if (!t.recurrence || t.recurrence === "none") return null;
+  if (!completed?.recurrence) return null;
 
-  // ✅ regra 2: base é a data original (anchor); se não existir, cai no term
-  const base = t.recurrenceAnchor ?? t.term;
-  if (!base) return null;
+  const recurrence = completed.recurrence as Recurrence;
 
-  const nextAnchor = computeNextAnchor(base, t.recurrence);
-  if (!nextAnchor) return null;
+  const base = completed.term ?? toSafeUtcDateFromIso(toIsoFromDateUTC(new Date()));
+  const next = nextTermFromRecurrence(base, recurrence);
+  const nextIso = toIsoFromDateUTC(next);
+  const nextSafeDate = toSafeUtcDateFromIso(nextIso);
 
-  const ccUnique = Array.from(new Set(t.carbonCopies.map((c) => c.slackUserId))).filter(Boolean);
+  const nextTask = await prisma.task.create({
+    data: {
+      title: completed.title,
+      description: completed.description,
+      delegation: completed.delegation,
+      delegationEmail: completed.delegationEmail ?? null,
+      responsible: completed.responsible,
+      responsibleEmail: completed.responsibleEmail ?? null,
 
-  const created = await prisma.$transaction(async (tx) => {
-    const next = await tx.task.create({
-      data: {
-        title: t.title,
-        description: t.description ?? null,
-        delegation: t.delegation,
-        responsible: t.responsible,
-        term: nextAnchor,
-        deadlineTime: t.deadlineTime ?? null,
-        recurrence: t.recurrence,
-        recurrenceAnchor: nextAnchor,
-        urgency: t.urgency,
-        status: "pending",
-        projectId: t.projectId ?? null,
+      term: nextSafeDate,
+      deadlineTime: completed.deadlineTime ?? null,
 
-        ...(ccUnique.length
-          ? {
-              carbonCopies: {
-                createMany: {
-                  data: ccUnique.map((slackUserId) => ({ slackUserId })),
-                  skipDuplicates: true,
-                },
-              },
-            }
-          : {}),
-      },
-      select: { id: true, term: true },
-    });
+      status: "pending",
+      recurrence: completed.recurrence as any,
+      recurrenceAnchor: nextSafeDate,
 
-    return next;
+      urgency: completed.urgency as any,
+      projectId: completed.projectId ?? null,
+      dependsOnId: completed.dependsOnId ?? null,
+
+      carbonCopies: completed.carbonCopies.length
+        ? {
+            createMany: {
+              data: completed.carbonCopies.map((c) => ({
+                slackUserId: c.slackUserId,
+                email: c.email ?? null,
+              })),
+            },
+          }
+        : undefined,
+    },
+    select: { id: true, term: true },
   });
 
-  return created;
+  void syncCalendarEventForTask(nextTask.id).catch((e) => {
+    console.error("[calendar] failed to create/sync event for next recurring task:", nextTask.id, e);
+  });
+
+  return nextTask;
 }
