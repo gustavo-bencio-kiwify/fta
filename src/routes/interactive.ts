@@ -381,6 +381,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
         // =========================================================
         // ✅ REABRIR (na thread de conclusão)
+        // - Se a task era recorrente, apaga a próxima instância criada automaticamente
+        //   (para não ficar duplicada quando você reabrir)
         // =========================================================
         if (actionId === TASK_REOPEN_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
@@ -406,12 +408,63 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 projectId: true,
                 dependsOnId: true,
                 urgency: true,
+                createdAt: true,
+                updatedAt: true,
                 carbonCopies: { select: { slackUserId: true } },
               },
             });
 
             if (!oldTask) return;
 
+            // =========================================================
+            // ✅ 1) Se era recorrente: apaga a próxima instância gerada
+            // =========================================================
+            if (oldTask.recurrence) {
+              try {
+                // janela baseada no "momento da conclusão" (updatedAt costuma bater com o update do status done)
+                const base = oldTask.updatedAt ?? new Date();
+                const windowStart = new Date(base.getTime() - 2 * 60 * 1000);
+                const windowEnd = new Date(base.getTime() + 10 * 60 * 1000);
+
+                const whereNext: any = {
+                  id: { not: oldTask.id },
+                  status: { not: "done" },
+                  recurrence: oldTask.recurrence,
+                  responsible: oldTask.responsible,
+                  projectId: oldTask.projectId ?? null,
+                  createdAt: { gte: windowStart, lte: windowEnd },
+                };
+
+                // se a task antiga tem term, a próxima costuma ser > term
+                if (oldTask.term) whereNext.term = { gt: oldTask.term };
+
+                // se tinha delegation definida, tenta casar igual (ajuda a acertar o alvo)
+                if (oldTask.delegation) whereNext.delegation = oldTask.delegation;
+
+                const nextAuto = await prisma.task.findFirst({
+                  where: whereNext,
+                  orderBy: [{ createdAt: "asc" }],
+                  select: { id: true },
+                });
+
+                if (nextAuto) {
+                  // remove calendário da próxima antes de deletar (se existir)
+                  await deleteCalendarEventForTask(nextAuto.id).catch(() => { });
+                  await prisma.task.delete({ where: { id: nextAuto.id } });
+
+                  req.log.info(
+                    { oldTaskId: oldTask.id, deletedNextId: nextAuto.id },
+                    "[REOPEN] deleted next recurring instance before reopening"
+                  );
+                }
+              } catch (e) {
+                req.log.error({ e, oldTaskId: oldTask.id }, "[REOPEN] failed to delete next recurring instance");
+              }
+            }
+
+            // =========================================================
+            // ✅ 2) Reabre (cria nova task) normalmente
+            // =========================================================
             const newTask = await createTaskService({
               title: oldTask.title,
               description: oldTask.description ?? undefined,
@@ -463,7 +516,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             }
 
             if (!deferNotifyCreated) {
-              // notifica como se fosse criação normal
               await notifyTaskCreated({
                 slack,
                 taskId: newTask.id,
@@ -504,6 +556,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return;
         }
 
+
         // ============================
         // ✅ CONCLUIR (Home) + Concluir (DM da task)
         // ============================
@@ -523,8 +576,11 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const tasksToConclude = await prisma.task.findMany({
             where: {
               id: { in: selectedIds },
-              responsible: userSlackId,
               status: { not: "done" },
+              OR: [
+                { responsible: userSlackId }, // responsável pode concluir
+                { delegation: userSlackId },  // delegador também pode concluir
+              ],
             },
             select: {
               id: true,
@@ -543,9 +599,17 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const concludedIds = tasksToConclude.map((t) => t.id);
 
           await prisma.task.updateMany({
-            where: { id: { in: concludedIds }, responsible: userSlackId },
+            where: {
+              id: { in: concludedIds },
+              status: { not: "done" },
+              OR: [
+                { responsible: userSlackId },
+                { delegation: userSlackId },
+              ],
+            },
             data: { status: "done" },
           });
+
 
           // ✅ remove da agenda (status done => sync apaga)
           void Promise.allSettled(concludedIds.map((id) => syncCalendarEventForTask(id))).catch(() => { });
