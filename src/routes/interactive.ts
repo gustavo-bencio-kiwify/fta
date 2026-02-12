@@ -25,7 +25,7 @@ import {
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
 import { updateTaskOpenMessage } from "../services/updateTaskOpenMessage";
 import { markTaskOpenMessageAsCanceled } from "../services/markTaskOpenMessageAsCanceled";
-
+import { BATCH_ADD_TASK_ACTION_ID, BATCH_REMOVE_TASK_ACTION_ID } from "../views/sendBatchModal";
 import {
   createProjectModalView,
   CREATE_PROJECT_MODAL_CALLBACK_ID,
@@ -99,10 +99,9 @@ import { prisma } from "../lib/prisma";
 import { createTaskService } from "../services/createTaskService";
 import { updateTaskService } from "../services/updateTaskService";
 import { getProjectViewModalData } from "../services/getProjectViewModalData";
-
+import { sendImportTemplateDm } from "../services/sendImportTemplateDm";
 import { notifyTaskCreated, TASK_DETAILS_CONCLUDE_ACTION_ID } from "../services/notifyTaskCreated";
 import { notifyTaskCompleted, TASK_REOPEN_ACTION_ID } from "../services/notifyTaskCompleted";
-
 import { syncCalendarEventForTask, deleteCalendarEventForTask } from "../services/googleCalendar";
 
 import { publishHome } from "../services/publishHome";
@@ -373,9 +372,38 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         }
 
         if (actionId === HOME_SEND_BATCH_ACTION_ID) {
-          await slack.views.open({ trigger_id: payload.trigger_id, view: sendBatchModalView() });
+          if (!userSlackId) return reply.status(200).send();
+
+          const appUrl = String(process.env.APP_URL ?? "").replace(/\/$/, "");
+          const templateUrl = appUrl
+            ? `${appUrl}/public/templates/tasks_import_template.xlsx`
+            : "";
+
+          await sendBotDm(
+            slack,
+            userSlackId,
+            "📦 *Importar atividades em lote*\n\n" +
+            "Envie um arquivo *.xlsx* aqui no DM comigo.\n" +
+            (templateUrl ? `Clique <${templateUrl}|aqui> para baixar o template.\n\n` : "\n")
+          );
+
           return reply.status(200).send();
         }
+
+
+        // dentro do block_actions
+        if (actionId === "SEU_ACTION_ID_IMPORT_EXCEL") {
+          if (!userSlackId) return reply.status(200).send();
+
+          reply.status(200).send(); // ACK rápido
+
+          void sendImportTemplateDm(slack, userSlackId).catch((e) => {
+            req.log.error({ e }, "[IMPORT_EXCEL] send template DM failed");
+          });
+
+          return;
+        }
+
 
         if (actionId === HOME_NEW_PROJECT_ACTION_ID) {
           await slack.views.open({ trigger_id: payload.trigger_id, view: createProjectModalView() });
@@ -1139,6 +1167,38 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return reply.status(200).send();
         }
 
+        if (actionId === BATCH_ADD_TASK_ACTION_ID || actionId === BATCH_REMOVE_TASK_ACTION_ID) {
+          if (!userSlackId) return reply.status(200).send();
+
+          const view = payload.view;
+          if (!view?.id) return reply.status(200).send();
+
+          let count = 1;
+          try {
+            const meta = JSON.parse(view.private_metadata ?? "{}");
+            count = Number(meta.count ?? 1) || 1;
+          } catch { }
+
+          if (actionId === BATCH_ADD_TASK_ACTION_ID) count += 1;
+          if (actionId === BATCH_REMOVE_TASK_ACTION_ID) count -= 1;
+
+          // refaz options de projetos (pra manter seleção válida)
+          const projects = await prisma.project.findMany({
+            where: { status: "active", members: { some: { slackUserId: userSlackId } } },
+            orderBy: { name: "asc" },
+            take: 100,
+            select: { id: true, name: true },
+          });
+
+          await slack.views.update({
+            view_id: view.id,
+            hash: view.hash,
+            view: sendBatchModalView({ projects, count }),
+          });
+
+          return reply.status(200).send();
+        }
+
         // Checkbox: só seleciona
         if (actionId === TASK_SELECT_ACTION_ID) return reply.status(200).send();
 
@@ -1520,8 +1580,172 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         // SEND BATCH (placeholder)
         // -------------------------
         if (cb === SEND_BATCH_MODAL_CALLBACK_ID) {
-          return reply.send({});
+          if (!userSlackId) return reply.send({});
+
+          const values = payload.view?.state?.values ?? {};
+
+          let count = 1;
+          try {
+            const meta = JSON.parse(payload.view.private_metadata ?? "{}");
+            count = Number(meta.count ?? 1) || 1;
+          } catch { }
+
+          const errors: Record<string, string> = {};
+          const tasksInput: Array<{
+            title: string;
+            description?: string | null;
+            responsible: string;
+            termIso: string | null;
+            deadlineTime: string | null;
+            projectId: string | null;
+            dependsOnId: string | null;
+            recurrence: string | null;
+            urgency: string;
+            carbonCopies: string[];
+          }> = [];
+
+          function bid(i: number) {
+            return {
+              titleBlock: `batch_title_block_${i}`,
+              descBlock: `batch_desc_block_${i}`,
+              respBlock: `batch_resp_block_${i}`,
+              dueBlock: `batch_due_block_${i}`,
+              timeBlock: `batch_time_block_${i}`,
+              urgencyBlock: `batch_urgency_block_${i}`,
+              ccBlock: `batch_cc_block_${i}`,
+              projectBlock: `batch_project_block_${i}`,
+              recurrenceBlock: `batch_recurrence_block_${i}`,
+              dependsBlock: `batch_depends_block_${i}`,
+            };
+          }
+
+          for (let i = 0; i < count; i++) {
+            const ids = bid(i);
+
+            const title = (getInputValue(values, ids.titleBlock, "title") ?? "").trim();
+            const description = (getInputValue(values, ids.descBlock, "description") ?? "").trim() || null;
+
+            const responsible = getSelectedUser(values, ids.respBlock, "responsible") ?? "";
+
+            const termIso = getSelectedDate(values, ids.dueBlock, "due_date") ?? null;
+            const deadlineTime = getSelectedTime(values, ids.timeBlock, TASK_TIME_ACTION_ID) ?? null;
+
+            const projectId = getSelectedOptionValue(values, ids.projectBlock, TASK_PROJECT_ACTION_ID) ?? null;
+            const dependsOnId = getSelectedOptionValue(values, ids.dependsBlock, TASK_DEPENDS_ACTION_ID) ?? null;
+
+            const recurrenceRaw =
+              getSelectedOptionValue(values, ids.recurrenceBlock, TASK_RECURRENCE_ACTION_ID) ?? "none";
+            const recurrence = recurrenceRaw === "none" ? null : recurrenceRaw;
+
+            const urgency = getSelectedOptionValue(values, ids.urgencyBlock, "urgency") ?? "light";
+            const carbonCopies = getSelectedUsers(values, ids.ccBlock, "carbon_copies");
+
+            // validações mínimas (igual create task)
+            if (!title) errors[ids.titleBlock] = "Informe o título.";
+            if (!responsible) errors[ids.respBlock] = "Selecione o responsável.";
+
+            tasksInput.push({
+              title,
+              description,
+              responsible,
+              termIso,
+              deadlineTime,
+              projectId,
+              dependsOnId,
+              recurrence,
+              urgency,
+              carbonCopies,
+            });
+          }
+
+          if (Object.keys(errors).length) {
+            return reply.send({ response_action: "errors", errors });
+          }
+
+          // cria antes de fechar modal (como você faz no createTask)
+          const createdTasks = [];
+          for (const t of tasksInput) {
+            const termDate: Date | null = t.termIso ? new Date(`${t.termIso}T03:00:00.000Z`) : null;
+
+            const task = await createTaskService({
+              title: t.title,
+              description: t.description?.trim() ? t.description : undefined,
+              delegation: userSlackId,
+              responsible: t.responsible,
+              term: termDate,
+              deadlineTime: t.deadlineTime ?? null,
+              recurrence: t.recurrence ?? null,
+              projectId: t.projectId ?? null,
+              dependsOnId: t.dependsOnId ?? null,
+              urgency: t.urgency,
+              carbonCopies: t.carbonCopies,
+            });
+
+            createdTasks.push(task);
+          }
+
+          // fecha modal
+          reply.send({});
+
+          // side-effects async
+          void (async () => {
+            const affected = new Set<string>();
+            affected.add(userSlackId);
+
+            for (const task of createdTasks) {
+              try {
+                await syncTaskParticipantEmails({
+                  slack,
+                  taskId: task.id,
+                  delegationSlackId: userSlackId,
+                  responsibleSlackId: task.responsible,
+                  carbonCopiesSlackIds: task.carbonCopies.map((c) => c.slackUserId),
+                });
+
+                await syncCalendarEventForTask(task.id);
+              } catch (e) {
+                req.log.error({ e, taskId: task.id }, "[BATCH_CREATE] email/calendar sync failed");
+              }
+
+              // depende?
+              let deferNotifyCreated = false;
+              if (task.dependsOnId) {
+                const dep = await prisma.task.findUnique({
+                  where: { id: task.dependsOnId },
+                  select: { status: true },
+                });
+                deferNotifyCreated = dep?.status !== "done";
+              }
+
+              if (!deferNotifyCreated) {
+                await notifyTaskCreated({
+                  slack,
+                  taskId: task.id,
+                  createdBy: userSlackId,
+                  taskTitle: task.title,
+                  responsible: task.responsible,
+                  carbonCopies: task.carbonCopies.map((c) => c.slackUserId),
+                  term: task.term,
+                  deadlineTime: (task as any).deadlineTime ?? null,
+                });
+              }
+
+              affected.add(task.responsible);
+              if (task.delegation) affected.add(task.delegation);
+              for (const c of task.carbonCopies) affected.add(c.slackUserId);
+            }
+
+            await Promise.allSettled(Array.from(affected).map((uid) => publishHome(slack, uid)));
+
+            // opcional: DM de resumo pro criador
+            await sendBotDm(slack, userSlackId, `✅ ${createdTasks.length} tarefas criadas em lote.`);
+          })().catch((err) => {
+            req.log.error({ err }, "[BATCH_CREATE] side-effects failed");
+          });
+
+          return;
         }
+
 
         // -------------------------
         // CREATE PROJECT
