@@ -312,7 +312,6 @@ export function homeTasksBlocks(args: {
             { type: "button", text: { type: "plain_text", text: "✅ Concluir" }, action_id: PROJECT_CONCLUDE_ACTION_ID, value: p.id },
           ],
         } as KnownBlock,
-        { type: "divider" } as KnownBlock,
       ])
     );
   } else {
@@ -320,7 +319,7 @@ export function homeTasksBlocks(args: {
   }
 
   // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
-  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
+  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 0 }).map((_, i) => ({
     type: "context",
     block_id: `bottom_pad_${i}`,
     elements: [{ type: "mrkdwn", text: " " }],

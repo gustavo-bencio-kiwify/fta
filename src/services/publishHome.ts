@@ -357,20 +357,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     })
   );
 
-  // ✅ NOVO: força a seção de projetos existir mesmo quando vazio
-  if (!projectsWithCounts.length) {
-    blocks.push(
-      { type: "divider" },
-      { type: "header", text: { type: "plain_text", text: "📁 Projetos que participo" } },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "Você ainda não participa de nenhum projeto.\nUse o botão *📁 Criar Projeto* no topo para começar.",
-        },
-      }
-    );
-  }
+  
 
   await slack.views.publish({
     user_id: userSlackId,
