@@ -174,7 +174,7 @@ function renderGroup(title: string, blocksInside: KnownBlock[]): KnownBlock[] {
 
 export function homeTasksBlocks(args: {
   // você é responsável
-  tasksOverdue: HomeTaskItem[];
+  tasksOverdue: HomeTaskItem[]; // (mantido no tipo por compatibilidade, mas não renderiza mais)
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
@@ -205,8 +205,7 @@ export function homeTasksBlocks(args: {
   // SUAS TAREFAS (RESPONSÁVEL)
   // =========================
   pushHeader("📌 Suas tarefas (você é responsável)");
-  pushGroup("Atrasadas", args.tasksOverdue.flatMap(renderMyTaskItem));
-  pushDivider();
+  // ✅ Removido "Atrasadas"
   pushGroup("Hoje", args.tasksToday.flatMap(renderMyTaskItem));
   pushDivider();
   pushGroup("Amanhã", args.tasksTomorrow.flatMap(renderMyTaskItem));
@@ -223,7 +222,7 @@ export function homeTasksBlocks(args: {
         action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
         value: "conclude_selected",
       },
-      { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
       { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
     ],
@@ -244,7 +243,7 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "delegated_actions",
     elements: [
-      { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
       { type: "button", text: { type: "plain_text", text: "✏️ Editar" }, action_id: DELEGATED_EDIT_ACTION_ID, value: "edit" },
       { type: "button", text: { type: "plain_text", text: "❌ Cancelar" }, action_id: DELEGATED_CANCEL_ACTION_ID, value: "cancel" },
@@ -266,7 +265,7 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "cc_actions",
     elements: [
-      { type: "button", text: { type: "plain_text", text: "❓ Enviar dúvida" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: "::thread: Abrir thread" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
     ],
   });
   pushDivider();
@@ -321,7 +320,6 @@ export function homeTasksBlocks(args: {
   }
 
   // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
-  // Ajuste o número (10/12/15/20) conforme necessário
   const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
     type: "context",
     block_id: `bottom_pad_${i}`,

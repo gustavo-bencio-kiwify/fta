@@ -23,6 +23,8 @@ import {
 } from "../views/createTaskModal";
 
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
+import { updateTaskOpenMessage } from "../services/updateTaskOpenMessage";
+import { markTaskOpenMessageAsCanceled } from "../services/markTaskOpenMessageAsCanceled";
 
 import {
   createProjectModalView,
@@ -112,6 +114,7 @@ import { notifyTaskCanceledGroup } from "../services/notifyTaskCanceledGroup";
 import { notifyTaskEdited } from "../services/notifyTaskEdited";
 import { taskDetailsModalView } from "../views/taskDetailsModal";
 import { createNextRecurringTaskFromCompleted } from "../services/createNextRecurringTaskFromCompleted";
+import { handleTaskResponsibleReassign } from "../services/handleTaskResponsibleReassign";
 
 type SlackPayload = any;
 
@@ -700,7 +703,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return reply.status(200).send();
         }
 
-        // ---- Enviar dúvida
+        // ---- Enviar Thread
         if (actionId === TASKS_SEND_QUESTION_ACTION_ID || actionId === CC_SEND_QUESTION_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
 
@@ -857,6 +860,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               return;
             }
 
+            // ✅ 1) Notifica o grupo (DMs)
             await Promise.allSettled(
               tasksToDelete.map((t) =>
                 notifyTaskCanceledGroup({
@@ -869,9 +873,22 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               )
             );
 
-            // ✅ remove da agenda antes de deletar
+            // ✅ 2) Substitui a mensagem principal (DM de criação) por "cancelada"
+            await Promise.allSettled(
+              tasksToDelete.map((t) =>
+                markTaskOpenMessageAsCanceled({
+                  slack,
+                  taskId: t.id,
+                  taskTitle: t.title,
+                  canceledBySlackId: userSlackId,
+                })
+              )
+            );
+
+            // ✅ 3) Remove da agenda antes de deletar
             await Promise.allSettled(tasksToDelete.map((t) => deleteCalendarEventForTask(t.id)));
 
+            // ✅ 4) Deleta do banco
             await prisma.task.deleteMany({
               where: {
                 id: { in: tasksToDelete.map((t) => t.id) },
@@ -879,8 +896,10 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               },
             });
 
+            // ✅ 5) Atualiza Home de todos afetados
             const affectedUsers = new Set<string>();
             affectedUsers.add(userSlackId);
+
             for (const t of tasksToDelete) {
               affectedUsers.add(t.responsible);
               for (const c of t.carbonCopies) affectedUsers.add(c.slackUserId);
@@ -893,6 +912,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return;
         }
+
 
         // ---- Editar tarefa (abre modal)
         if (actionId === DELEGATED_EDIT_ACTION_ID) {
@@ -1295,6 +1315,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           if (!taskId) return reply.send({});
 
+          // 1) atualiza no banco primeiro
           const updated = await updateTaskService({
             taskId,
             delegationSlackId: userSlackId,
@@ -1307,45 +1328,97 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             recurrence,
           });
 
-          // ✅ salva emails + sincroniza agenda (mudou data/horário/attendees)
-          try {
-            await syncTaskParticipantEmails({
-              slack,
-              taskId,
-              delegationSlackId: userSlackId,
-              responsibleSlackId: updated.after.responsible,
-              carbonCopiesSlackIds: updated.after.carbonCopies,
-            });
+          // ✅ ACK rápido pro Slack
+          reply.send({});
 
-            await syncCalendarEventForTask(taskId);
-          } catch (e) {
-            req.log.error({ e, taskId }, "[EDIT_TASK] email/calendar sync failed");
-          }
+          // 2) efeitos colaterais async (email/calendar/notifs/home + update da msg principal)
+          void (async () => {
+            // ✅ salva emails + sincroniza agenda (mudou data/horário/attendees)
+            try {
+              await syncTaskParticipantEmails({
+                slack,
+                taskId,
+                delegationSlackId: userSlackId,
+                responsibleSlackId: updated.after.responsible,
+                carbonCopiesSlackIds: updated.after.carbonCopies,
+              });
 
-          const allCc = Array.from(new Set([...(updated.before.carbonCopies ?? []), ...(updated.after.carbonCopies ?? [])]));
+              await syncCalendarEventForTask(taskId);
+            } catch (e) {
+              req.log.error({ e, taskId }, "[EDIT_TASK] email/calendar sync failed");
+            }
 
-          await Promise.allSettled([
-            notifyTaskEdited({
-              slack,
-              taskId, // ✅ novo
-              taskTitle: updated.after.title,
-              editedBy: userSlackId,
-              responsible: updated.after.responsible,
-              carbonCopies: allCc,
-            }),
-            ,
-          ]);
+            // ✅ se mudou responsável: reatribui a mensagem principal (avisa o antigo + cria pro novo)
+            // ✅ se NÃO mudou: apenas atualiza a mensagem principal existente (prazo/título/etc)
+            try {
+              const beforeResp = (updated as any)?.before?.responsible ?? null;
+              const afterResp = (updated as any)?.after?.responsible ?? null;
 
-          const affectedUsers = new Set<string>();
-          affectedUsers.add(userSlackId);
-          affectedUsers.add(updated.after.responsible);
-          if (updated.after.delegation) affectedUsers.add(updated.after.delegation);
-          for (const cc of allCc) affectedUsers.add(cc);
+              if (beforeResp && afterResp && beforeResp !== afterResp) {
+                await handleTaskResponsibleReassign({
+                  slack,
+                  taskId,
+                  editedBySlackId: userSlackId,
+                });
+              } else {
+                await updateTaskOpenMessage(slack, taskId);
+              }
+            } catch (e) {
+              req.log.error({ e, taskId }, "[EDIT_TASK] open message reassign/update failed");
+            }
 
-          await Promise.allSettled(Array.from(affectedUsers).map((uid) => publishHome(slack, uid)));
+            const allCc = Array.from(
+              new Set([...(updated.before.carbonCopies ?? []), ...(updated.after.carbonCopies ?? [])])
+            );
 
-          return reply.send({});
+            // (mantive seu pattern de before/after)
+            const u: any = updated as any;
+            const before = u.before ?? {};
+            const after = u.after ?? {};
+
+            await Promise.allSettled([
+              notifyTaskEdited({
+                slack,
+                taskId,
+                editedBy: userSlackId,
+                responsible: after.responsible,
+                carbonCopies: allCc,
+
+                oldTitle: before.title ?? null,
+                newTitle: after.title ?? null,
+
+                oldTerm: before.term ?? null,
+                newTerm: after.term ?? null,
+
+                oldDeadlineTime: before.deadlineTime ?? null,
+                newDeadlineTime: after.deadlineTime ?? null,
+
+                oldResponsible: before.responsible ?? null,
+                newResponsible: after.responsible ?? null,
+
+                oldRecurrence: before.recurrence ?? null,
+                newRecurrence: after.recurrence ?? null,
+
+                oldCarbonCopies: before.carbonCopies ?? null,
+                newCarbonCopies: after.carbonCopies ?? null,
+              }),
+            ]);
+
+            const affectedUsers = new Set<string>();
+            affectedUsers.add(userSlackId);
+            affectedUsers.add(updated.after.responsible);
+            if (updated.after.delegation) affectedUsers.add(updated.after.delegation);
+            for (const cc of allCc) affectedUsers.add(cc);
+
+            await Promise.allSettled(Array.from(affectedUsers).map((uid) => publishHome(slack, uid)));
+          })().catch((err) => {
+            req.log.error({ err, taskId }, "[EDIT_TASK] side-effects failed");
+          });
+
+          return;
         }
+
+
 
         // -------------------------
         // RESCHEDULE TASK
@@ -1383,46 +1456,65 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             newTime,
           });
 
-          // ✅ sincroniza agenda (mudou data/horário)
-          void syncCalendarEventForTask(taskId).catch((e) => {
-            req.log.error({ e, taskId }, "[RESCHEDULE] calendar sync failed");
+          // ✅ ACK rápido pro Slack
+          reply.send({});
+
+          void (async () => {
+            // ✅ sincroniza agenda (mudou data/horário)
+            try {
+              await syncCalendarEventForTask(taskId);
+            } catch (e) {
+              req.log.error({ e, taskId }, "[RESCHEDULE] calendar sync failed");
+            }
+
+            // ✅ NOVO: atualiza a mensagem principal (DM de abertura) com o novo prazo
+            try {
+              await updateTaskOpenMessage(slack, taskId);
+            } catch (e) {
+              req.log.error({ e, taskId }, "[RESCHEDULE] updateTaskOpenMessage failed");
+            }
+
+            const after = await prisma.task.findUnique({
+              where: { id: taskId },
+              select: {
+                id: true,
+                title: true,
+                responsible: true,
+                delegation: true,
+                carbonCopies: { select: { slackUserId: true } },
+              },
+            });
+
+            if (after) {
+              const br = formatDateBRFromIso(newDateIso);
+              const newDateBr = newTime?.trim() ? `${br} às ${newTime.trim()}` : br;
+
+              await Promise.allSettled([
+                notifyTaskRescheduledGroup({
+                  slack,
+                  responsibleSlackId: after.responsible,
+                  delegationSlackId: after.delegation ?? null,
+                  carbonCopiesSlackIds: after.carbonCopies.map((c) => c.slackUserId),
+                  taskTitle: after.title,
+                  newDateBr,
+                }),
+
+                publishHome(slack, after.responsible),
+                ...(after.delegation ? [publishHome(slack, after.delegation)] : []),
+                ...Array.from(new Set(after.carbonCopies.map((c) => c.slackUserId))).map((uid) =>
+                  publishHome(slack, uid)
+                ),
+              ]);
+            } else {
+              await publishHome(slack, userSlackId);
+            }
+          })().catch((err) => {
+            req.log.error({ err, taskId }, "[RESCHEDULE] side-effects failed");
           });
 
-          const after = await prisma.task.findUnique({
-            where: { id: taskId },
-            select: {
-              id: true,
-              title: true,
-              responsible: true,
-              delegation: true,
-              carbonCopies: { select: { slackUserId: true } },
-            },
-          });
-
-          if (after) {
-            const br = formatDateBRFromIso(newDateIso);
-            const newDateBr = newTime?.trim() ? `${br} às ${newTime.trim()}` : br;
-
-            await Promise.allSettled([
-              notifyTaskRescheduledGroup({
-                slack,
-                responsibleSlackId: after.responsible,
-                delegationSlackId: after.delegation ?? null,
-                carbonCopiesSlackIds: after.carbonCopies.map((c) => c.slackUserId),
-                taskTitle: after.title,
-                newDateBr,
-              }),
-
-              publishHome(slack, after.responsible),
-              ...(after.delegation ? [publishHome(slack, after.delegation)] : []),
-              ...Array.from(new Set(after.carbonCopies.map((c) => c.slackUserId))).map((uid) => publishHome(slack, uid)),
-            ]);
-          } else {
-            await publishHome(slack, userSlackId);
-          }
-
-          return reply.send({});
+          return;
         }
+
 
         // -------------------------
         // SEND BATCH (placeholder)

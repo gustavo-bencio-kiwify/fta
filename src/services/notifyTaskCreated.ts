@@ -123,7 +123,11 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
         ],
       },
 
-      { type: "section", text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` } },
+      {
+        type: "section",
+        block_id: "task_due",
+        text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` },
+      } as any,
 
       {
         type: "actions",
@@ -137,7 +141,7 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
           },
           {
             type: "button",
-            text: { type: "plain_text", text: "❓ Enviar dúvida" },
+            text: { type: "plain_text", text: ":thread: Abrir thread" },
             action_id: TASKS_SEND_QUESTION_ACTION_ID,
             value: taskId,
           },
@@ -186,13 +190,17 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
           text: ccText,
           blocks: [
             { type: "section", text: { type: "mrkdwn", text: ccText } },
-            { type: "section", text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` } },
+            {
+              type: "section",
+              block_id: "task_due",
+              text: { type: "mrkdwn", text: `*Prazo:* ${prazo}` },
+            } as any,
             {
               type: "actions",
               elements: [
                 {
                   type: "button",
-                  text: { type: "plain_text", text: "❓ Enviar dúvida" },
+                  text: { type: "plain_text", text: ":thread: Abrir thread" },
                   action_id: TASKS_SEND_QUESTION_ACTION_ID,
                   value: taskId,
                 },

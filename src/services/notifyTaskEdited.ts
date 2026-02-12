@@ -4,99 +4,229 @@ import { prisma } from "../lib/prisma";
 
 type NotifyTaskEditedArgs = {
   slack: WebClient;
-
   taskId: string;
-  taskTitle?: string; // opcional (fallback)
 
-  editedBy: string; // slack id de quem editou (delegador)
-  responsible: string; // slack id do responsável
-  carbonCopies: string[]; // slack ids
+  editedBy: string;      // quem editou (delegador)
+  responsible: string;   // responsável atual (depois da edição)
 
-  notifyResponsible?: boolean; // default true
+  // participantes (CC final). Pode ser união before+after.
+  carbonCopies: string[];
+
+  // BEFORE/AFTER (todos opcionais, mas quanto mais você passar, melhor o diff)
+  oldTitle?: string | null;
+  newTitle?: string | null;
+
+  oldTerm?: Date | string | null;     // Date do Prisma ou "YYYY-MM-DD"
+  newTerm?: Date | string | null;
+
+  oldDeadlineTime?: string | null;    // "HH:MM"
+  newDeadlineTime?: string | null;
+
+  oldResponsible?: string | null;
+  newResponsible?: string | null;
+
+  oldRecurrence?: string | null;
+  newRecurrence?: string | null;
+
+  oldCarbonCopies?: string[] | null;
+  newCarbonCopies?: string[] | null;
 };
 
 function mention(userId: string) {
   return `<@${userId}>`;
 }
 
-function uniq(arr: string[]) {
-  return Array.from(new Set((arr ?? []).filter(Boolean)));
+function uniq(arr: Array<string | null | undefined>) {
+  return Array.from(new Set((arr ?? []).map((x) => (x ?? "").trim()).filter(Boolean)));
 }
 
-async function openDmChannel(slack: WebClient, userId: string) {
-  const conv = await slack.conversations.open({ users: userId });
+function termToIso(term?: Date | string | null) {
+  if (!term) return null;
+
+  if (typeof term === "string") {
+    // "YYYY-MM-DD"
+    if (/^\d{4}-\d{2}-\d{2}$/.test(term)) return term;
+
+    // ISO completo
+    const dt = new Date(term);
+    if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+
+    return null;
+  }
+
+  if (term instanceof Date && !Number.isNaN(term.getTime())) {
+    return term.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+function formatDateBrFromIso(iso: string) {
+  // ✅ interpreta como 00:00 SP
+  const d = new Date(`${iso}T03:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo" }).format(d);
+}
+
+function formatDue(term?: Date | string | null, time?: string | null) {
+  const iso = termToIso(term);
+  if (!iso) return "sem prazo";
+  const ddmmyyyy = formatDateBrFromIso(iso);
+  const hhmm = (time ?? "").trim();
+  return hhmm ? `${ddmmyyyy} às ${hhmm}` : ddmmyyyy;
+}
+
+function sameString(a?: string | null, b?: string | null) {
+  return (a ?? "").trim() === (b ?? "").trim();
+}
+
+function sameArray(a?: string[] | null, b?: string[] | null) {
+  const aa = uniq(a ?? []).sort();
+  const bb = uniq(b ?? []).sort();
+  if (aa.length !== bb.length) return false;
+  for (let i = 0; i < aa.length; i++) if (aa[i] !== bb[i]) return false;
+  return true;
+}
+
+async function openDmOrMpim(slack: WebClient, userIds: string[]) {
+  const users = uniq(userIds).join(",");
+  const conv = await slack.conversations.open({ users });
   const channelId = conv.channel?.id;
-  if (!channelId) throw new Error("conversations.open returned no channel (DM)");
+  if (!channelId) throw new Error("conversations.open returned no channel id");
   return channelId;
 }
 
-async function dm(slack: WebClient, userId: string, text: string) {
-  const channel = await openDmChannel(slack, userId);
-  await slack.chat.postMessage({ channel, text });
+async function postRootAndThread(args: {
+  slack: WebClient;
+  channel: string;
+  rootText: string;
+  threadText: string;
+}) {
+  const root = await args.slack.chat.postMessage({
+    channel: args.channel,
+    text: args.rootText,
+  });
+
+  const threadTs = (root as any)?.ts as string | undefined;
+  if (!threadTs) return;
+
+  await args.slack.chat.postMessage({
+    channel: args.channel,
+    thread_ts: threadTs,
+    text: args.threadText,
+  });
 }
 
-export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
-  const { slack, taskId, editedBy, responsible, carbonCopies, notifyResponsible = true } = args;
+/**
+ * ✅ Carimbo na thread da mensagem de criação da task (salva em Task.slackOpenChannelId/Task.slackOpenMessageTs)
+ */
+async function postStampInOpenThread(args: {
+  slack: WebClient;
+  taskId: string;
+  editedBy: string;
+}) {
+  const { slack, taskId, editedBy } = args;
 
-  const ccUnique = uniq(carbonCopies)
-    .filter((id) => id !== editedBy) // não notifica o editor como cc
-    .filter(Boolean);
-
-  // pega a thread “principal” (mensagem de criação) salva na Task
-  const task = await prisma.task.findUnique({
+  const t = await prisma.task.findUnique({
     where: { id: taskId },
     select: {
-      id: true,
-      title: true,
       slackOpenChannelId: true,
       slackOpenMessageTs: true,
     },
   });
 
-  const title = task?.title ?? args.taskTitle ?? "tarefa";
-  const channelId = task?.slackOpenChannelId ?? null;
-  const threadTs = task?.slackOpenMessageTs ?? null;
+  const channelId = t?.slackOpenChannelId ?? null;
+  const threadTs = t?.slackOpenMessageTs ?? null;
+  if (!channelId || !threadTs) return;
 
-  // monta texto do update dentro da thread principal
-  const ccMentions = ccUnique.filter((cc) => cc !== responsible).map(mention);
-  const ccText = ccMentions.length ? ` • *Cópia:* ${ccMentions.join(", ")}` : "";
+  await slack.chat.postMessage({
+    channel: channelId,
+    thread_ts: threadTs,
+    text: `✏️ Tarefa editada por ${mention(editedBy)}`,
+  });
+}
 
-  const threadText = `✏️ Tarefa *${title}* editada por ${mention(editedBy)}.${ccText}`;
+export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
+  const {
+    slack,
+    taskId,
+    editedBy,
+    responsible,
+    carbonCopies,
 
-  // ✅ 1) PRIORIDADE: postar na thread da mensagem de criação (igual FUPs)
-  if (channelId && threadTs) {
-    await slack.chat.postMessage({
-      channel: channelId,
-      thread_ts: threadTs,
-      text: threadText,
-    });
-  } else {
-    // fallback (se não tiver thread salva por algum motivo):
-    // 2) responsável recebe DM do bot
-    if (notifyResponsible && responsible && responsible !== editedBy) {
-      const responsibleText = `✏️ Tarefa *${title}* editada por ${mention(editedBy)}.`;
-      await dm(slack, responsible, responsibleText);
-    }
+    oldTitle,
+    newTitle,
+    oldTerm,
+    newTerm,
+    oldDeadlineTime,
+    newDeadlineTime,
+    oldResponsible,
+    newResponsible,
+    oldRecurrence,
+    newRecurrence,
+    oldCarbonCopies,
+    newCarbonCopies,
+  } = args;
 
-    // 3) cópias recebem DM do bot
-    await Promise.allSettled(
-      ccUnique
-        .filter((cc) => cc !== responsible)
-        .map(async (cc) => {
-          const ccTextFallback = `✏️ Tarefa *${title}* editada por ${mention(editedBy)}.`;
-          await dm(slack, cc, ccTextFallback);
-        })
-    );
+  const afterResponsible = (newResponsible ?? responsible ?? "").trim();
+  const participants = uniq([editedBy, afterResponsible, ...(carbonCopies ?? [])]);
+
+  const title = (newTitle ?? oldTitle ?? "tarefa").trim() || "tarefa";
+
+  // Mensagem principal (raiz)
+  const rootText = `${mention(editedBy)} editou a tarefa *${title}*`;
+
+  // Thread: só o que mudou
+  const changes: string[] = [];
+
+  if (!sameString(oldTitle ?? null, newTitle ?? null) && (oldTitle || newTitle)) {
+    changes.push(`• *Título:* ${oldTitle ?? "_vazio_"} → ${newTitle ?? "_vazio_"}`);
   }
 
-  // ✅ opcional: confirmação pra quem editou (mantive, mas bem enxuto)
-  // se você quiser 100% “sem DM”, pode remover esse bloco.
+  const oldDue = formatDue(oldTerm ?? null, oldDeadlineTime ?? null);
+  const newDue = formatDue(newTerm ?? null, newDeadlineTime ?? null);
+  if (oldDue !== newDue) {
+    changes.push(`• *Prazo:* ${oldDue} → ${newDue}`);
+  }
+
+  if ((oldResponsible || newResponsible) && oldResponsible !== newResponsible) {
+    const from = oldResponsible ? mention(oldResponsible) : "_vazio_";
+    const to = newResponsible ? mention(newResponsible) : "_vazio_";
+    changes.push(`• *Responsável:* ${from} → ${to}`);
+  }
+
+  if ((oldRecurrence || newRecurrence) && oldRecurrence !== newRecurrence) {
+    changes.push(`• *Recorrência:* ${oldRecurrence ?? "_nenhuma_"} → ${newRecurrence ?? "_nenhuma_"}`);
+  }
+
+  if (!sameArray(oldCarbonCopies ?? null, newCarbonCopies ?? null) && (oldCarbonCopies || newCarbonCopies)) {
+    const from = uniq(oldCarbonCopies ?? []).map(mention).join(", ") || "_nenhuma_";
+    const to = uniq(newCarbonCopies ?? []).map(mention).join(", ") || "_nenhuma_";
+    changes.push(`• *Cópias:* ${from} → ${to}`);
+  }
+
+  const changesText = changes.length ? changes.join("\n") : "• Nenhuma alteração detectada.";
+
+  const threadText =
+    `${mention(afterResponsible)}, ${mention(editedBy)} realizou as seguintes alterações:\n\n` +
+    `${changesText}`;
+
+  // ✅ 0) sempre tenta carimbar na thread da mensagem de criação (best-effort)
+  // (não depende do DM/MPIM dar certo)
+  void postStampInOpenThread({ slack, taskId, editedBy }).catch(() => {});
+
+  // 1) tenta DM em grupo (MPIM) com thread
   try {
-    const editedByText = channelId && threadTs
-      ? `✏️ Atualização registrada na thread da tarefa *${title}*.`
-      : `✏️ Você editou a tarefa *${title}*.`;
-    await dm(slack, editedBy, editedByText);
+    const channel = await openDmOrMpim(slack, participants);
+    await postRootAndThread({ slack, channel, rootText, threadText });
+    return;
   } catch {
-    // ignora
+    // 2) fallback: DM individual pra cada envolvido (cada um com root + thread)
+    await Promise.allSettled(
+      participants.map(async (uid) => {
+        const channel = await openDmOrMpim(slack, [uid]);
+        await postRootAndThread({ slack, channel, rootText, threadText });
+      })
+    );
   }
 }
