@@ -265,7 +265,7 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "cc_actions",
     elements: [
-      { type: "button", text: { type: "plain_text", text: "::thread: Abrir thread" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
     ],
   });
   pushDivider();
