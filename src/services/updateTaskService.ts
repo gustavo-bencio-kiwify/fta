@@ -34,6 +34,7 @@ const TASK_SELECT = {
   recurrence: true,
   recurrenceAnchor: true,
   urgency: true,
+  calendarPrivate: true,
   createdAt: true,
   carbonCopies: { select: { slackUserId: true } },
 } as const;
@@ -49,6 +50,7 @@ type TaskSelected = {
   recurrence: any;
   recurrenceAnchor: Date | null;
   urgency: any;
+  calendarPrivate: boolean;
   createdAt: Date;
   carbonCopies: { slackUserId: string }[];
 };
@@ -63,6 +65,7 @@ type TaskSnapshot = {
   deadlineTime: string | null;
   recurrence: string | null;
   urgency: string;
+  calendarPrivate: boolean;
   createdAt: Date;
   carbonCopies: string[];
 };
@@ -78,6 +81,7 @@ function toSnapshot(t: TaskSelected): TaskSnapshot {
     deadlineTime: t.deadlineTime ?? null,
     recurrence: t.recurrence ? String(t.recurrence) : null,
     urgency: t.urgency ? String(t.urgency) : "light",
+    calendarPrivate: Boolean((t as any).calendarPrivate ?? false),
     createdAt: t.createdAt,
     carbonCopies: (t.carbonCopies ?? []).map((c) => c.slackUserId),
   };
@@ -96,6 +100,9 @@ export async function updateTaskService(args: {
   responsibleSlackId: string;
   carbonCopiesSlackIds: string[];
   recurrence: string | null;
+
+  urgency: "light" | "asap" | "turbo" | string;
+  calendarPrivate: boolean;
 }) {
   const {
     taskId,
@@ -107,6 +114,8 @@ export async function updateTaskService(args: {
     responsibleSlackId,
     carbonCopiesSlackIds,
     recurrence,
+    urgency,
+    calendarPrivate,
   } = args;
 
   const beforeRaw = await prisma.task.findUnique({
@@ -135,6 +144,9 @@ export async function updateTaskService(args: {
 
       responsible: responsibleSlackId,
       recurrence: recurrenceValue as any,
+
+      urgency: (urgency as any) ?? "light",
+      calendarPrivate: Boolean(calendarPrivate),
 
       // ✅ mantém regra: se recorrente, ancora no term; se não, null
       recurrenceAnchor: recurrenceValue ? newTerm : null,

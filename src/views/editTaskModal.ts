@@ -24,6 +24,12 @@ export const EDIT_CC_ACTION_ID = "edit_cc" as const;
 export const EDIT_RECURRENCE_BLOCK_ID = "edit_recurrence_block" as const;
 export const EDIT_RECURRENCE_ACTION_ID = "edit_recurrence" as const;
 
+export const EDIT_URGENCY_BLOCK_ID = "edit_urgency_block" as const;
+export const EDIT_URGENCY_ACTION_ID = "edit_urgency" as const;
+
+export const EDIT_CAL_PRIVATE_BLOCK_ID = "edit_cal_private_block" as const;
+export const EDIT_CAL_PRIVATE_ACTION_ID = "edit_cal_private_action" as const;
+
 type RecurrenceValue =
   | "none"
   | "daily"
@@ -69,6 +75,9 @@ export function editTaskModalView(args: {
   responsibleSlackId: string;
   carbonCopiesSlackIds: string[];
   recurrence: string | null; // pode vir "none" ou null
+
+  urgency?: "light" | "asap" | "turbo" | string | null;
+  calendarPrivate?: boolean;
 }): View {
   const recurrenceInitial: RecurrenceValue =
     (args.recurrence as RecurrenceValue) && args.recurrence !== "null"
@@ -85,6 +94,15 @@ export function editTaskModalView(args: {
     "semiannual",
     "annual",
   ];
+
+  const urgencyRaw = String((args.urgency as any) ?? "light").trim();
+  const urgencyValue =
+    urgencyRaw === "asap" || urgencyRaw === "turbo" || urgencyRaw === "light" ? urgencyRaw : "light";
+  const urgencyLabel = (u: string) => {
+    if (u === "turbo") return "🔴 Turbo";
+    if (u === "asap") return "🟡 ASAP";
+    return "🟢 Light";
+  };
 
   return {
     type: "modal",
@@ -175,6 +193,28 @@ export function editTaskModalView(args: {
         label: { type: "plain_text", text: "Pessoas em cópia" },
       },
 
+      // Urgência
+      {
+        type: "input",
+        block_id: EDIT_URGENCY_BLOCK_ID,
+        element: {
+          type: "static_select",
+          action_id: EDIT_URGENCY_ACTION_ID,
+          placeholder: { type: "plain_text", text: "Selecione" },
+          initial_option: {
+            text: { type: "plain_text", text: urgencyLabel(String(urgencyValue)) },
+            value: String(urgencyValue),
+          },
+          options: [
+            { text: { type: "plain_text", text: "🟢 Light" }, value: "light" },
+            { text: { type: "plain_text", text: "🟡 ASAP" }, value: "asap" },
+            { text: { type: "plain_text", text: "🔴 Turbo" }, value: "turbo" },
+          ],
+        },
+        label: { type: "plain_text", text: "Nível de urgência" },
+      },
+
+      // Google Calendar: privado
       // Recorrência
       {
         type: "input",
@@ -194,6 +234,30 @@ export function editTaskModalView(args: {
           })),
         },
         label: { type: "plain_text", text: "Recorrência" },
+      },
+      {
+        type: "input",
+        optional: true,
+        block_id: EDIT_CAL_PRIVATE_BLOCK_ID,
+        element: {
+          type: "checkboxes",
+          action_id: EDIT_CAL_PRIVATE_ACTION_ID,
+          options: [
+            {
+              text: { type: "plain_text", text: "🔒 Deixar evento privado" },
+              value: "private",
+            },
+          ],
+          initial_options: args.calendarPrivate
+            ? [
+              {
+                text: { type: "plain_text", text: "🔒 Deixar evento privado" },
+                value: "private",
+              },
+            ]
+            : undefined,
+        },
+        label: { type: "plain_text", text: "Google Calendar" },
       },
     ],
   };

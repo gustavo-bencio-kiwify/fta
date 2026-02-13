@@ -8,6 +8,7 @@ export type HomeTaskItem = {
   title: string;
   description?: string | null;
   delegation?: string | null;
+  delegationName?: string | null; // ✅ novo (para exibir nome no plain_text)
   term?: Date | string | null;
   urgency: Urgency;
 };
@@ -18,6 +19,7 @@ export type DelegatedTaskItem = {
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
+  responsibleName?: string | null; // ✅ novo
 };
 
 export type CcTaskItem = {
@@ -26,7 +28,9 @@ export type CcTaskItem = {
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
+  responsibleName?: string | null; // ✅ novo (CC mostra só responsável)
   delegation?: string | null;
+  delegationName?: string | null;
 };
 
 export type RecurrenceItem = {
@@ -79,88 +83,108 @@ function formatDateBR(d?: Date | string | null) {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo" }).format(dt);
 }
 
-function taskLineSameRow(t: {
-  title: string;
-  term?: Date | string | null;
-  delegation?: string | null;
-  responsible?: string | null;
-  urgency: Urgency;
-}) {
-  const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (vence ${due})` : "";
-  const delegatedText = t.delegation ? ` — delegado por <@${t.delegation}>` : "";
-  const responsibleText = t.responsible ? ` — responsável: <@${t.responsible}>` : "";
-  return `${urgencyEmoji(t.urgency)} *${t.title}*${dueText}${delegatedText}${responsibleText}`;
+function atName(nameOrNull?: string | null, fallbackId?: string | null) {
+  const n = (nameOrNull ?? "").trim();
+  if (n) return `@${n}`;
+  const fb = (fallbackId ?? "").trim();
+  return fb ? `@${fb}` : "";
 }
 
-function renderMyTaskItem(t: HomeTaskItem): KnownBlock[] {
+/**
+ * ✅ Render padrão com checkbox alinhado à esquerda:
+ * - usa actions + checkboxes (texto em plain_text)
+ * - description, se existir, vira context embaixo (cinza)
+ */
+function renderCheckboxRow(args: {
+  blockId: string;
+  taskId: string;
+  line: string;
+  description?: string | null;
+}): KnownBlock[] {
   const blocks: KnownBlock[] = [
     {
-      type: "section",
-      block_id: `task_${t.id}`,
-      text: { type: "mrkdwn", text: taskLineSameRow(t) },
-      accessory: {
-        type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID,
-        options: [{ text: { type: "plain_text", text: " " }, value: t.id }],
-      },
-    },
+      type: "actions",
+      block_id: args.blockId,
+      elements: [
+        {
+          type: "checkboxes",
+          action_id: TASK_SELECT_ACTION_ID,
+          options: [
+            {
+              text: { type: "plain_text", text: args.line.slice(0, 150) }, // evita estourar
+              value: args.taskId,
+            },
+          ],
+        },
+      ],
+    } as KnownBlock,
   ];
 
-  if (t.description?.trim()) {
+  if (args.description?.trim()) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: t.description.trim() }],
-    });
+      elements: [{ type: "mrkdwn", text: args.description.trim().slice(0, 250) }],
+    } as KnownBlock);
   }
 
   return blocks;
 }
 
-function renderDelegatedItem(t: DelegatedTaskItem): KnownBlock[] {
-  const line = taskLineSameRow({
-    title: t.title,
-    term: t.term ?? null,
-    urgency: t.urgency,
-    responsible: t.responsible,
-    delegation: null,
-  });
+function myLine(t: HomeTaskItem) {
+  const due = formatDateBR(t.term ?? null);
+  const dueText = due ? ` (vence ${due})` : "";
 
-  return [
-    {
-      type: "section",
-      block_id: `delegated_${t.id}`,
-      text: { type: "mrkdwn", text: line },
-      accessory: {
-        type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID,
-        options: [{ text: { type: "plain_text", text: " " }, value: t.id }],
-      },
-    },
-  ];
+  // ✅ no plain_text não existe mention real, então usamos @Nome
+  const delegatedBy = t.delegationName
+    ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
+    : t.delegation
+      ? ` — delegado por ${atName(null, t.delegation)}`
+      : "";
+
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText}${delegatedBy}`;
+}
+
+function delegatedLine(t: DelegatedTaskItem) {
+  const due = formatDateBR(t.term ?? null);
+  const dueText = due ? ` (vence ${due})` : "";
+
+  const resp = atName(t.responsibleName ?? null, t.responsible);
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — responsável: ${resp}`;
+}
+
+function ccLineOnlyResponsible(t: CcTaskItem) {
+  const due = formatDateBR(t.term ?? null);
+  const dueText = due ? ` (vence ${due})` : "";
+
+  const resp = atName(t.responsibleName ?? null, t.responsible);
+  // ✅ CC: apenas responsável (sem delegado por)
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — responsável: ${resp}`;
+}
+
+function renderMyTaskItem(t: HomeTaskItem): KnownBlock[] {
+  return renderCheckboxRow({
+    blockId: `task_${t.id}`,
+    taskId: t.id,
+    line: myLine(t),
+    description: t.description ?? null,
+  });
+}
+
+function renderDelegatedItem(t: DelegatedTaskItem): KnownBlock[] {
+  return renderCheckboxRow({
+    blockId: `delegated_${t.id}`,
+    taskId: t.id,
+    line: delegatedLine(t),
+  });
 }
 
 function renderCcItem(t: CcTaskItem): KnownBlock[] {
-  const line = taskLineSameRow({
-    title: t.title,
-    term: t.term ?? null,
-    urgency: t.urgency,
-    responsible: t.responsible,
-    delegation: t.delegation ?? null,
+  // ✅ agora CC usa o mesmo padrão (actions + checkboxes) => alinhado igual os de cima
+  return renderCheckboxRow({
+    blockId: `cc_${t.id}`,
+    taskId: t.id,
+    line: ccLineOnlyResponsible(t),
   });
-
-  return [
-    {
-      type: "section",
-      block_id: `cc_${t.id}`,
-      text: { type: "mrkdwn", text: line },
-      accessory: {
-        type: "checkboxes",
-        action_id: TASK_SELECT_ACTION_ID,
-        options: [{ text: { type: "plain_text", text: " " }, value: t.id }],
-      },
-    },
-  ];
 }
 
 function renderGroup(title: string, blocksInside: KnownBlock[]): KnownBlock[] {
@@ -205,7 +229,6 @@ export function homeTasksBlocks(args: {
   // SUAS TAREFAS (RESPONSÁVEL)
   // =========================
   pushHeader("📌 Suas tarefas (você é responsável)");
-  // ✅ Removido "Atrasadas"
   pushGroup("Hoje", args.tasksToday.flatMap(renderMyTaskItem));
   pushDivider();
   pushGroup("Amanhã", args.tasksTomorrow.flatMap(renderMyTaskItem));
@@ -226,7 +249,7 @@ export function homeTasksBlocks(args: {
       { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
       { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
     ],
-  });
+  } as KnownBlock);
   pushDivider();
 
   // =========================
@@ -245,10 +268,11 @@ export function homeTasksBlocks(args: {
     elements: [
       { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
+      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
       { type: "button", text: { type: "plain_text", text: "✏️ Editar" }, action_id: DELEGATED_EDIT_ACTION_ID, value: "edit" },
       { type: "button", text: { type: "plain_text", text: "❌ Cancelar" }, action_id: DELEGATED_CANCEL_ACTION_ID, value: "cancel" },
     ],
-  });
+  } as KnownBlock);
   pushDivider();
 
   // =========================
@@ -266,8 +290,9 @@ export function homeTasksBlocks(args: {
     block_id: "cc_actions",
     elements: [
       { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: CC_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
     ],
-  });
+  } as KnownBlock);
   pushDivider();
 
   // =========================
@@ -285,7 +310,7 @@ export function homeTasksBlocks(args: {
       ])
     );
   } else {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhuma_" } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhuma_" } } as KnownBlock);
   }
   pushDivider();
 
@@ -315,17 +340,8 @@ export function homeTasksBlocks(args: {
       ])
     );
   } else {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } } as KnownBlock);
   }
-
-  // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
-  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 0 }).map((_, i) => ({
-    type: "context",
-    block_id: `bottom_pad_${i}`,
-    elements: [{ type: "mrkdwn", text: " " }],
-  })) as KnownBlock[];
-
-  blocks.push(...bottomPadBlocks);
 
   return blocks;
 }

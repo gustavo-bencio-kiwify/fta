@@ -105,6 +105,7 @@ export async function createTaskService(raw: unknown) {
 
       urgency: data.urgency,
       status: "pending",
+      calendarPrivate: data.calendarPrivate ?? false,
 
       ...(carbonCopiesData.length
         ? {

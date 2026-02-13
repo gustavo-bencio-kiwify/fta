@@ -14,6 +14,52 @@ const SAO_PAULO_TZ = "America/Sao_Paulo";
 // ✅ ajuda a evitar Slack cortar o final (projetos some quando excede blocks)
 const MAX_TASKS_PER_SECTION = 8;
 
+// =========================================================
+// ✅ Slack ID -> Nome (cache)
+// - precisa do scope: users:read
+// - dentro do checkbox é plain_text, então não existe mention real.
+//   Aqui a gente transforma Uxxxx -> "Larissa Bittar" e mostra "@Larissa Bittar".
+// =========================================================
+const slackNameCache = new Map<string, string>();
+
+async function getSlackDisplayName(slack: WebClient, userId: string): Promise<string> {
+  if (!userId) return "";
+  if (slackNameCache.has(userId)) return slackNameCache.get(userId)!;
+
+  try {
+    const res = await slack.users.info({ user: userId });
+    const u: any = (res as any)?.user;
+
+    const name =
+      (u?.profile?.display_name as string) ||
+      (u?.profile?.real_name as string) ||
+      (u?.real_name as string) ||
+      (u?.name as string) ||
+      userId;
+
+    const finalName = String(name).trim() || userId;
+    slackNameCache.set(userId, finalName);
+    return finalName;
+  } catch {
+    // se faltar scope ou erro, cai pro próprio id (mas pelo menos não quebra)
+    slackNameCache.set(userId, userId);
+    return userId;
+  }
+}
+
+async function resolveSlackNames(slack: WebClient, ids: Array<string | null | undefined>) {
+  const unique = Array.from(new Set((ids ?? []).filter(Boolean).map(String)));
+  const map = new Map<string, string>();
+
+  await Promise.all(
+    unique.map(async (id) => {
+      map.set(id, await getSlackDisplayName(slack, id));
+    })
+  );
+
+  return map;
+}
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -116,7 +162,6 @@ export async function publishHome(slack: WebClient, userId: string) {
   // ✅ Regra pedida:
   // Se delegador == responsável (mesmo usuário), NÃO aparece em "Minhas tarefas"
   // e aparece só em "Você delegou".
-  // No seu schema delegation NÃO é null, então o filtro é simples.
   const excludeSelfDelegatedFromResponsible: Prisma.TaskWhereInput = {
     delegation: { not: userSlackId },
   };
@@ -144,6 +189,12 @@ export async function publishHome(slack: WebClient, userId: string) {
     },
   })) as unknown as RawTask[];
 
+  // ✅ resolve nomes para delegation (delegado por ...)
+  const myDelegationNameMap = await resolveSlackNames(
+    slack,
+    myTasks.map((t) => t.delegation)
+  );
+
   const tasksOverdue = myTasks
     .filter((t) => bucketByIso(t.term, todayIso) === "overdue")
     .slice(0, MAX_TASKS_PER_SECTION)
@@ -152,6 +203,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
       term: t.term,
       urgency: t.urgency,
     }));
@@ -164,6 +216,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
       term: t.term,
       urgency: t.urgency,
     }));
@@ -176,6 +229,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
       term: t.term,
       urgency: t.urgency,
     }));
@@ -188,6 +242,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
       term: t.term,
       urgency: t.urgency,
     }));
@@ -211,6 +266,12 @@ export async function publishHome(slack: WebClient, userId: string) {
     urgency: "light" | "asap" | "turbo";
     responsible: string;
   }>;
+
+  // ✅ resolve nomes do responsável
+  const delegatedResponsibleNameMap = await resolveSlackNames(
+    slack,
+    delegated.map((t) => t.responsible)
+  );
 
   const delegatedToday = delegated
     .filter((t) => bucketByIso(t.term, todayIso) === "today")
@@ -244,6 +305,12 @@ export async function publishHome(slack: WebClient, userId: string) {
     responsible: string;
     delegation: string;
   }>;
+
+  // ✅ resolve nomes de responsible + delegation (para mostrar responsável e delegado por)
+  const ccNameMap = await resolveSlackNames(
+    slack,
+    ccTasks.flatMap((t) => [t.responsible, t.delegation])
+  );
 
   const ccToday = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today").slice(0, MAX_TASKS_PER_SECTION);
   const ccTomorrow = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow").slice(0, MAX_TASKS_PER_SECTION);
@@ -310,6 +377,7 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
       delegatedTomorrow: delegatedTomorrow.map((t) => ({
         id: t.id,
@@ -317,6 +385,7 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
       delegatedFuture: delegatedFuture.map((t) => ({
         id: t.id,
@@ -324,6 +393,7 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
 
       ccToday: ccToday.map((t) => ({
@@ -332,7 +402,9 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,
@@ -340,7 +412,9 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
       ccFuture: ccFuture.map((t) => ({
         id: t.id,
@@ -348,7 +422,9 @@ export async function publishHome(slack: WebClient, userId: string) {
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
 
       recurrences: recurrenceTasks.map((r) => ({ id: r.id, title: r.title, recurrence: r.recurrence })),
@@ -356,8 +432,6 @@ export async function publishHome(slack: WebClient, userId: string) {
       projects: projectsWithCounts,
     })
   );
-
-  
 
   await slack.views.publish({
     user_id: userSlackId,

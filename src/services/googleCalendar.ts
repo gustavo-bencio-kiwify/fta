@@ -43,21 +43,23 @@ function buildEventBody(args: {
   startDateIso: string; // YYYY-MM-DD
   deadlineTime?: string | null; // HH:MM
   attendeeEmails?: string[];
-  taskId?: string; // opcional: pra rastrear no Google
+  taskId?: string;
+  calendarPrivate?: boolean; // ✅ NOVO
 }) {
-  const { summary, description, startDateIso, deadlineTime, attendeeEmails, taskId } = args;
+  const { summary, description, startDateIso, deadlineTime, attendeeEmails, taskId, calendarPrivate } = args;
 
   const body: any = {
     summary,
     description: (description ?? "").trim() || undefined,
+
+    // ✅ NOVO: privacidade no Google Calendar
+    visibility: calendarPrivate ? "private" : "default",
   };
 
-  // (Opcional mas útil) “marca” o evento com taskId no Google
   if (taskId) {
     body.extendedProperties = { private: { taskId } };
   }
 
-  // Com horário -> evento 1h
   if (deadlineTime && /^\d{2}:\d{2}$/.test(deadlineTime)) {
     const startDateTime = `${startDateIso}T${deadlineTime}:00-03:00`;
     const start = new Date(startDateTime);
@@ -66,7 +68,6 @@ function buildEventBody(args: {
     body.start = { dateTime: start.toISOString(), timeZone: SAO_PAULO_TZ };
     body.end = { dateTime: end.toISOString(), timeZone: SAO_PAULO_TZ };
   } else {
-    // all-day (end.date é exclusivo -> dia seguinte)
     body.start = { date: startDateIso };
     body.end = { date: addOneDay(startDateIso) };
   }
@@ -77,6 +78,7 @@ function buildEventBody(args: {
 
   return body;
 }
+
 
 async function calendarFetch(args: {
   method: "POST" | "PATCH" | "DELETE";
@@ -123,6 +125,7 @@ export async function createCalendarEventForTask(taskId: string) {
       delegationEmail: true,
       responsibleEmail: true,
       carbonCopies: { select: { email: true } },
+      calendarPrivate: true,
     },
   });
 
@@ -142,6 +145,7 @@ export async function createCalendarEventForTask(taskId: string) {
     deadlineTime: task.deadlineTime ?? null,
     attendeeEmails,
     taskId: task.id,
+    calendarPrivate: task.calendarPrivate,
   });
 
   const { ok, status, raw } = await calendarFetch({ method: "POST", calendarId, body });
@@ -262,6 +266,7 @@ export async function syncCalendarEventForTask(taskId: string) {
       delegationEmail: true,
       responsibleEmail: true,
       carbonCopies: { select: { email: true } },
+      calendarPrivate: true,
     },
   });
 
@@ -300,6 +305,7 @@ export async function syncCalendarEventForTask(taskId: string) {
     deadlineTime: task.deadlineTime ?? null,
     attendeeEmails,
     taskId: task.id,
+    calendarPrivate: task.calendarPrivate,
   });
 
   // 2a) já tem evento -> patch

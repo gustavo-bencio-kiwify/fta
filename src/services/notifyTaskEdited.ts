@@ -6,8 +6,8 @@ type NotifyTaskEditedArgs = {
   slack: WebClient;
   taskId: string;
 
-  editedBy: string;      // quem editou (delegador)
-  responsible: string;   // responsável atual (depois da edição)
+  editedBy: string; // quem editou (delegador)
+  responsible: string; // responsável atual (depois da edição)
 
   // participantes (CC final). Pode ser união before+after.
   carbonCopies: string[];
@@ -16,10 +16,10 @@ type NotifyTaskEditedArgs = {
   oldTitle?: string | null;
   newTitle?: string | null;
 
-  oldTerm?: Date | string | null;     // Date do Prisma ou "YYYY-MM-DD"
+  oldTerm?: Date | string | null; // Date do Prisma ou "YYYY-MM-DD"
   newTerm?: Date | string | null;
 
-  oldDeadlineTime?: string | null;    // "HH:MM"
+  oldDeadlineTime?: string | null; // "HH:MM"
   newDeadlineTime?: string | null;
 
   oldResponsible?: string | null;
@@ -27,6 +27,12 @@ type NotifyTaskEditedArgs = {
 
   oldRecurrence?: string | null;
   newRecurrence?: string | null;
+
+  oldUrgency?: string | null;
+  newUrgency?: string | null;
+
+  oldCalendarPrivate?: boolean | null;
+  newCalendarPrivate?: boolean | null;
 
   oldCarbonCopies?: string[] | null;
   newCarbonCopies?: string[] | null;
@@ -76,6 +82,16 @@ function formatDue(term?: Date | string | null, time?: string | null) {
   return hhmm ? `${ddmmyyyy} às ${hhmm}` : ddmmyyyy;
 }
 
+function urgencyLabel(u?: string | null) {
+  if (u === "turbo") return "🔴 Turbo";
+  if (u === "asap") return "🟡 ASAP";
+  return "🟢 Light";
+}
+
+function calVisibilityLabel(privateFlag?: boolean | null) {
+  return privateFlag ? "🔒 Privado" : "🌐 Padrão";
+}
+
 function sameString(a?: string | null, b?: string | null) {
   return (a ?? "").trim() === (b ?? "").trim();
 }
@@ -120,11 +136,7 @@ async function postRootAndThread(args: {
 /**
  * ✅ Carimbo na thread da mensagem de criação da task (salva em Task.slackOpenChannelId/Task.slackOpenMessageTs)
  */
-async function postStampInOpenThread(args: {
-  slack: WebClient;
-  taskId: string;
-  editedBy: string;
-}) {
+async function postStampInOpenThread(args: { slack: WebClient; taskId: string; editedBy: string }) {
   const { slack, taskId, editedBy } = args;
 
   const t = await prisma.task.findUnique({
@@ -164,6 +176,13 @@ export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
     newResponsible,
     oldRecurrence,
     newRecurrence,
+
+    oldUrgency,
+    newUrgency,
+
+    oldCalendarPrivate,
+    newCalendarPrivate,
+
     oldCarbonCopies,
     newCarbonCopies,
   } = args;
@@ -199,6 +218,22 @@ export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
     changes.push(`• *Recorrência:* ${oldRecurrence ?? "_nenhuma_"} → ${newRecurrence ?? "_nenhuma_"}`);
   }
 
+  if ((oldUrgency || newUrgency) && oldUrgency !== newUrgency) {
+    changes.push(`• *Urgência:* ${urgencyLabel(oldUrgency ?? null)} → ${urgencyLabel(newUrgency ?? null)}`);
+  }
+
+  if (
+    oldCalendarPrivate !== undefined &&
+    newCalendarPrivate !== undefined &&
+    Boolean(oldCalendarPrivate) !== Boolean(newCalendarPrivate)
+  ) {
+    changes.push(
+      `• *Google Calendar:* ${calVisibilityLabel(Boolean(oldCalendarPrivate))} → ${calVisibilityLabel(
+        Boolean(newCalendarPrivate)
+      )}`
+    );
+  }
+
   if (!sameArray(oldCarbonCopies ?? null, newCarbonCopies ?? null) && (oldCarbonCopies || newCarbonCopies)) {
     const from = uniq(oldCarbonCopies ?? []).map(mention).join(", ") || "_nenhuma_";
     const to = uniq(newCarbonCopies ?? []).map(mention).join(", ") || "_nenhuma_";
@@ -208,11 +243,9 @@ export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
   const changesText = changes.length ? changes.join("\n") : "• Nenhuma alteração detectada.";
 
   const threadText =
-    `${mention(afterResponsible)}, ${mention(editedBy)} realizou as seguintes alterações:\n\n` +
-    `${changesText}`;
+    `${mention(afterResponsible)}, ${mention(editedBy)} realizou as seguintes alterações:\n\n` + `${changesText}`;
 
   // ✅ 0) sempre tenta carimbar na thread da mensagem de criação (best-effort)
-  // (não depende do DM/MPIM dar certo)
   void postStampInOpenThread({ slack, taskId, editedBy }).catch(() => {});
 
   // 1) tenta DM em grupo (MPIM) com thread

@@ -27,7 +27,6 @@ export async function events(app: FastifyInstance, slack: WebClient) {
     if (eventId) {
       if (seenEventIds.has(eventId)) return;
       seenEventIds.add(eventId);
-      // limpa depois de um tempo
       setTimeout(() => seenEventIds.delete(eventId), 10 * 60 * 1000).unref?.();
     }
 
@@ -41,40 +40,60 @@ export async function events(app: FastifyInstance, slack: WebClient) {
       return;
     }
 
-    // Mensagens no DM
-    if (event?.type === "message" && event?.channel_type === "im") {
-      // ignora mensagens do próprio bot / edits / etc
-      if (event.bot_id) return;
-      if (!event.user) return;
+    // Só queremos DM
+    if (event?.type !== "message" || event?.channel_type !== "im") return;
 
-      // tem arquivo?
-      const files = Array.isArray(event.files) ? event.files : [];
-      if (!files.length) return;
+    // ignora mensagens do próprio bot / edits / etc
+    if (event.bot_id) return;
+    if (!event.user) return;
 
-      // pega o primeiro xlsx
-      const xlsx = files.find((f: any) => {
-        const name = String(f?.name ?? "").toLowerCase();
-        const mimetype = String(f?.mimetype ?? "").toLowerCase();
-        return name.endsWith(".xlsx") || mimetype.includes("spreadsheetml");
-      });
-
-      if (!xlsx) return;
-
-      const channelId = String(event.channel);
-      const threadTs = String(event.thread_ts ?? event.ts); // se mandou na thread, responde na thread
-
-      // roda async
-      void importTasksFromExcelSlackFile({
-        slack,
-        uploadedBySlackId: event.user,
-        channelId,
-        threadTs,
-        file: xlsx,
-      }).catch((e) => {
-        req.log.error({ e }, "[EVENTS] importTasksFromExcelSlackFile failed");
-      });
-
+    // ignora edits (message_changed etc)
+    if (event.subtype && event.subtype !== "file_share") {
+      // se você quiser permitir texto normal no DM depois, remova esse return
       return;
     }
+
+    const files = Array.isArray(event.files) ? event.files : [];
+    if (!files.length) return;
+
+    // pega o primeiro xlsx
+    let xlsx = files.find((f: any) => {
+      const name = String(f?.name ?? "").toLowerCase();
+      const mimetype = String(f?.mimetype ?? "").toLowerCase();
+      return (
+        name.endsWith(".xlsx") ||
+        mimetype.includes("spreadsheetml") ||
+        mimetype.includes("officedocument.spreadsheetml.sheet")
+      );
+    });
+
+    if (!xlsx) return;
+
+    // ✅ fallback: às vezes o Slack manda file incompleto no evento
+    if (!xlsx.url_private_download && !xlsx.url_private) {
+      const fileId = String(xlsx.id ?? "");
+      if (fileId) {
+        try {
+          const info = await slack.files.info({ file: fileId });
+          const full = (info.file as any) ?? null;
+          if (full) xlsx = full;
+        } catch (e) {
+          req.log.error({ e, fileId }, "[EVENTS] files.info failed");
+        }
+      }
+    }
+
+    const channelId = String(event.channel);
+    const threadTs = String(event.thread_ts ?? event.ts); // se mandou na thread, responde na thread
+
+    void importTasksFromExcelSlackFile({
+      slack,
+      uploadedBySlackId: event.user,
+      channelId,
+      threadTs,
+      file: xlsx,
+    }).catch((e) => {
+      req.log.error({ e }, "[EVENTS] importTasksFromExcelSlackFile failed");
+    });
   });
 }

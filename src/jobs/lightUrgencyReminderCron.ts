@@ -55,7 +55,7 @@ function saoPauloMidnightUtc(dateIso: string) {
  */
 function isLightSlot(hour: number, minute: number) {
   if (minute !== 0) return false;
-  return hour === 10 || hour === 16;
+  return hour === 16;
 }
 
 export async function runLightUrgencyReminderCron() {

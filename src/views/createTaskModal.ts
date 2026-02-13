@@ -16,6 +16,9 @@ export const TASK_PROJECT_ACTION_ID = "project" as const;
 // ✅ NOVO: depende de (external_select)
 export const TASK_DEPENDS_BLOCK_ID = "depends_block" as const;
 export const TASK_DEPENDS_ACTION_ID = "depends_on" as const;
+export const TASK_CAL_PRIVATE_BLOCK_ID = "task_cal_private_block" as const;
+export const TASK_CAL_PRIVATE_ACTION_ID = "task_cal_private_action" as const;
+
 
 export type ProjectOption = { id: string; name: string };
 
@@ -155,6 +158,23 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
         label: { type: "plain_text", text: "Pessoas em cópia" },
         element: { type: "multi_users_select", action_id: "carbon_copies" },
       },
+      {
+        type: "input",
+        optional: true,
+        block_id: TASK_CAL_PRIVATE_BLOCK_ID,
+        label: { type: "plain_text", text: "Google Calendar" },
+        element: {
+          type: "checkboxes",
+          action_id: TASK_CAL_PRIVATE_ACTION_ID,
+          options: [
+            {
+              text: { type: "plain_text", text: "🔒 Deixar evento privado" },
+              value: "private",
+            },
+          ],
+        },
+      },
+
     ],
   };
 }

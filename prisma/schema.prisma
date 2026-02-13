@@ -101,16 +101,17 @@ model Task {
   carbonCopies TaskCarbonCopy[]
   reminders    TaskReminderLog[]
 
-  recurrenceAnchor   DateTime?
-  dependsOnId        String?
-  dependsOn          Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
-  dependents         Task[]    @relation("TaskDependsOn")
+  recurrenceAnchor DateTime?
+  dependsOnId      String?
+  dependsOn        Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
+  dependents       Task[]    @relation("TaskDependsOn")
 
   // ✅ thread da abertura (pra reminders)
   slackOpenChannelId String?
   slackOpenMessageTs String?
-  googleEventId   String?
-  googleEventLink String?
+  googleEventId      String?
+  googleEventLink    String?
+  calendarPrivate    Boolean @default(false)
 
   @@map("tasks")
 }
@@ -149,7 +150,7 @@ model TaskReminderLog {
 }
 
 model GoogleOAuthToken {
-  id           String   @id // vamos usar "default" como chave única
+  id           String    @id // vamos usar "default" como chave única
   refreshToken String
   accessToken  String?
   scope        String?

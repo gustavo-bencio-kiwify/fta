@@ -19,6 +19,7 @@ function formatDateBRFromIso(iso?: string | null) {
 }
 
 export function taskDetailsModalView(args: {
+  taskId: string; // ✅ NOVO
   title: string;
   responsibleSlackId: string;
   delegationSlackId: string | null;
@@ -30,7 +31,11 @@ export function taskDetailsModalView(args: {
   description: string | null;
 }): View {
   const dueBr = formatDateBRFromIso(args.dueDateIso);
-  const dueText = dueBr ? (args.deadlineTime ? `${dueBr} às ${args.deadlineTime}` : dueBr) : "Sem prazo";
+  const dueText = dueBr
+    ? args.deadlineTime
+      ? `${dueBr} às ${args.deadlineTime}`
+      : dueBr
+    : "Sem prazo";
 
   const delegatedText = args.delegationSlackId ? `<@${args.delegationSlackId}>` : "—";
   const projectText = args.projectNameOrId ?? "—";
@@ -38,6 +43,10 @@ export function taskDetailsModalView(args: {
 
   const blocks: View["blocks"] = [
     { type: "section", text: { type: "mrkdwn", text: `📌 *${args.title}*` } },
+
+    // ✅ NOVO: UID/ID da task (fácil de copiar)
+    { type: "context", elements: [{ type: "mrkdwn", text: `🆔 *UID:* \`${args.taskId}\`` }] },
+
     {
       type: "section",
       fields: [

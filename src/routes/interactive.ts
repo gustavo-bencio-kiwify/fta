@@ -20,6 +20,8 @@ import {
   TASK_PROJECT_ACTION_ID,
   TASK_DEPENDS_BLOCK_ID,
   TASK_DEPENDS_ACTION_ID,
+  TASK_CAL_PRIVATE_BLOCK_ID,
+  TASK_CAL_PRIVATE_ACTION_ID,
 } from "../views/createTaskModal";
 
 import { sendBatchModalView, SEND_BATCH_MODAL_CALLBACK_ID } from "../views/sendBatchModal";
@@ -84,6 +86,10 @@ import {
   EDIT_CC_ACTION_ID,
   EDIT_RECURRENCE_BLOCK_ID,
   EDIT_RECURRENCE_ACTION_ID,
+  EDIT_URGENCY_BLOCK_ID,
+  EDIT_URGENCY_ACTION_ID,
+  EDIT_CAL_PRIVATE_BLOCK_ID,
+  EDIT_CAL_PRIVATE_ACTION_ID,
 } from "../views/editTaskModal";
 
 import {
@@ -161,6 +167,10 @@ function getSelectedOptionValue(values: any, blockId: string, actionId: string):
 }
 function getSelectedUsers(values: any, blockId: string, actionId: string): string[] {
   return values?.[blockId]?.[actionId]?.selected_users ?? [];
+}
+function isCheckboxChecked(values: any, blockId: string, actionId: string, value: string) {
+  const selected = values?.[blockId]?.[actionId]?.selected_options ?? [];
+  return selected.some((o: any) => String(o?.value ?? "") === value);
 }
 
 function parseProjectModalState(view: any): { projectId: string; page: number; filter: ProjectModalFilter } | null {
@@ -375,9 +385,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           if (!userSlackId) return reply.status(200).send();
 
           const appUrl = String(process.env.APP_URL ?? "").replace(/\/$/, "");
-          const templateUrl = appUrl
-            ? `${appUrl}/public/templates/tasks_import_template.xlsx`
-            : "";
+          const templateUrl = appUrl ? `${appUrl}/public/templates/tasks_import_template.xlsx` : "";
 
           await sendBotDm(
             slack,
@@ -389,7 +397,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return reply.status(200).send();
         }
-
 
         // dentro do block_actions
         if (actionId === "SEU_ACTION_ID_IMPORT_EXCEL") {
@@ -403,7 +410,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return;
         }
-
 
         if (actionId === HOME_NEW_PROJECT_ACTION_ID) {
           await slack.views.open({ trigger_id: payload.trigger_id, view: createProjectModalView() });
@@ -587,7 +593,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return;
         }
 
-
         // ============================
         // ✅ CONCLUIR (Home) + Concluir (DM da task)
         // ============================
@@ -608,10 +613,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             where: {
               id: { in: selectedIds },
               status: { not: "done" },
-              OR: [
-                { responsible: userSlackId }, // responsável pode concluir
-                { delegation: userSlackId },  // delegador também pode concluir
-              ],
+              OR: [{ responsible: userSlackId }, { delegation: userSlackId }],
             },
             select: {
               id: true,
@@ -633,14 +635,10 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             where: {
               id: { in: concludedIds },
               status: { not: "done" },
-              OR: [
-                { responsible: userSlackId },
-                { delegation: userSlackId },
-              ],
+              OR: [{ responsible: userSlackId }, { delegation: userSlackId }],
             },
             data: { status: "done" },
           });
-
 
           // ✅ remove da agenda (status done => sync apaga)
           void Promise.allSettled(concludedIds.map((id) => syncCalendarEventForTask(id))).catch(() => { });
@@ -697,7 +695,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               notifyTaskCreated({
                 slack,
                 taskId: t.id,
-                createdBy: (t.delegation as any) ?? t.responsible, // delegation é obrigatório no seu schema, mas fallback defensivo
+                createdBy: (t.delegation as any) ?? t.responsible,
                 taskTitle: t.title,
                 responsible: t.responsible,
                 carbonCopies: t.carbonCopies.map((c) => c.slackUserId),
@@ -941,7 +939,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return;
         }
 
-
         // ---- Editar tarefa (abre modal)
         if (actionId === DELEGATED_EDIT_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
@@ -965,6 +962,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               deadlineTime: true,
               responsible: true,
               recurrence: true,
+              urgency: true, // ✅ NOVO
+              calendarPrivate: true, // ✅ NOVO
               carbonCopies: { select: { slackUserId: true } },
             },
           });
@@ -984,6 +983,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               responsibleSlackId: task.responsible,
               carbonCopiesSlackIds: task.carbonCopies.map((c) => c.slackUserId),
               recurrence: task.recurrence ?? null,
+              urgency: (task as any).urgency ?? "light", // ✅ NOVO
+              calendarPrivate: Boolean((task as any).calendarPrivate ?? false), // ✅ NOVO
             } as any),
           });
 
@@ -1047,6 +1048,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           await slack.views.open({
             trigger_id: payload.trigger_id,
             view: taskDetailsModalView({
+              taskId: task.id, // ✅ NOVO
               title: task.title,
               responsibleSlackId: task.responsible,
               delegationSlackId: task.delegation ?? null,
@@ -1058,6 +1060,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               description: task.description ?? null,
             }),
           });
+
 
           return reply.status(200).send();
         }
@@ -1247,6 +1250,12 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const urgency = getSelectedOptionValue(values, "urgency_block", "urgency") ?? "light";
           const carbonCopies = getSelectedUsers(values, "cc_block", "carbon_copies");
 
+          // ✅ checkbox "Deixar evento privado"
+          const calendarPrivate =
+            (values?.[TASK_CAL_PRIVATE_BLOCK_ID]?.[TASK_CAL_PRIVATE_ACTION_ID]?.selected_options ?? []).some(
+              (o: any) => String(o?.value ?? "") === "private"
+            );
+
           if (!userSlackId) return reply.send({});
           if (!title || !responsible) return reply.send({});
 
@@ -1262,6 +1271,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             dependsOnId,
             urgency,
             carbonCopies,
+            calendarPrivate, // ✅ NOVO
           });
 
           // ACK
@@ -1283,7 +1293,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               req.log.error({ e, taskId: task.id }, "[CREATE_TASK] email/calendar sync failed");
             }
 
-            // ✅ NOVO: se depende de outra task ainda não done, adia DM de "task criada"
+            // ✅ se depende de outra task ainda não done, adia DM de "task criada"
             let deferNotifyCreated = false;
             if (dependsOnId) {
               const dep = await prisma.task.findUnique({
@@ -1305,7 +1315,10 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 deadlineTime: (task as any).deadlineTime ?? null,
               });
             } else {
-              req.log.info({ taskId: task.id, dependsOnId }, "[CREATE_TASK] notifyTaskCreated deferred (blocked by dependency)");
+              req.log.info(
+                { taskId: task.id, dependsOnId },
+                "[CREATE_TASK] notifyTaskCreated deferred (blocked by dependency)"
+              );
             }
 
             const affected = new Set<string>();
@@ -1353,6 +1366,17 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             getSelectedOptionValue(values, EDIT_RECURRENCE_BLOCK_ID, EDIT_RECURRENCE_ACTION_ID) ?? "none";
           const recurrence = recurrenceRaw === "none" ? null : recurrenceRaw;
 
+          // ✅ NOVO: urgência no edit
+          const urgency = getSelectedOptionValue(values, EDIT_URGENCY_BLOCK_ID, EDIT_URGENCY_ACTION_ID) ?? "light";
+
+          // ✅ NOVO: privado no edit
+          const calendarPrivate = isCheckboxChecked(
+            values,
+            EDIT_CAL_PRIVATE_BLOCK_ID,
+            EDIT_CAL_PRIVATE_ACTION_ID,
+            "private"
+          );
+
           if (!title) {
             return reply.send({
               response_action: "errors",
@@ -1364,6 +1388,13 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             return reply.send({
               response_action: "errors",
               errors: { [EDIT_RESP_BLOCK_ID]: "Selecione o responsável." },
+            });
+          }
+
+          if (!urgency || !["light", "asap", "turbo"].includes(String(urgency))) {
+            return reply.send({
+              response_action: "errors",
+              errors: { [EDIT_URGENCY_BLOCK_ID]: "Selecione a urgência." },
             });
           }
 
@@ -1386,6 +1417,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             responsibleSlackId,
             carbonCopiesSlackIds,
             recurrence,
+            urgency, // ✅ NOVO
+            calendarPrivate, // ✅ NOVO
           });
 
           // ✅ ACK rápido pro Slack
@@ -1427,9 +1460,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               req.log.error({ e, taskId }, "[EDIT_TASK] open message reassign/update failed");
             }
 
-            const allCc = Array.from(
-              new Set([...(updated.before.carbonCopies ?? []), ...(updated.after.carbonCopies ?? [])])
-            );
+            const allCc = Array.from(new Set([...(updated.before.carbonCopies ?? []), ...(updated.after.carbonCopies ?? [])]));
 
             // (mantive seu pattern de before/after)
             const u: any = updated as any;
@@ -1459,6 +1490,12 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 oldRecurrence: before.recurrence ?? null,
                 newRecurrence: after.recurrence ?? null,
 
+                oldUrgency: before.urgency ?? null, // ✅ NOVO
+                newUrgency: after.urgency ?? null, // ✅ NOVO
+
+                oldCalendarPrivate: before.calendarPrivate ?? null, // ✅ NOVO
+                newCalendarPrivate: after.calendarPrivate ?? null, // ✅ NOVO
+
                 oldCarbonCopies: before.carbonCopies ?? null,
                 newCarbonCopies: after.carbonCopies ?? null,
               }),
@@ -1477,8 +1514,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return;
         }
-
-
 
         // -------------------------
         // RESCHEDULE TASK
@@ -1561,9 +1596,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
                 publishHome(slack, after.responsible),
                 ...(after.delegation ? [publishHome(slack, after.delegation)] : []),
-                ...Array.from(new Set(after.carbonCopies.map((c) => c.slackUserId))).map((uid) =>
-                  publishHome(slack, uid)
-                ),
+                ...Array.from(new Set(after.carbonCopies.map((c) => c.slackUserId))).map((uid) => publishHome(slack, uid)),
               ]);
             } else {
               await publishHome(slack, userSlackId);
@@ -1574,7 +1607,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return;
         }
-
 
         // -------------------------
         // SEND BATCH (placeholder)
@@ -1633,8 +1665,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             const projectId = getSelectedOptionValue(values, ids.projectBlock, TASK_PROJECT_ACTION_ID) ?? null;
             const dependsOnId = getSelectedOptionValue(values, ids.dependsBlock, TASK_DEPENDS_ACTION_ID) ?? null;
 
-            const recurrenceRaw =
-              getSelectedOptionValue(values, ids.recurrenceBlock, TASK_RECURRENCE_ACTION_ID) ?? "none";
+            const recurrenceRaw = getSelectedOptionValue(values, ids.recurrenceBlock, TASK_RECURRENCE_ACTION_ID) ?? "none";
             const recurrence = recurrenceRaw === "none" ? null : recurrenceRaw;
 
             const urgency = getSelectedOptionValue(values, ids.urgencyBlock, "urgency") ?? "light";
@@ -1746,7 +1777,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           return;
         }
 
-
         // -------------------------
         // CREATE PROJECT
         // -------------------------
@@ -1781,9 +1811,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             createdBySlackId: userSlackId,
           });
 
-          await Promise.allSettled(
-            Array.from(new Set([...(memberIds ?? []), userSlackId])).map((id) => publishHome(slack, id))
-          );
+          await Promise.allSettled(Array.from(new Set([...(memberIds ?? []), userSlackId])).map((id) => publishHome(slack, id)));
 
           return reply.send({});
         }

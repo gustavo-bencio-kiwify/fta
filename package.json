@@ -11,7 +11,9 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "turbo:reminder": "node -r ts-node/register src/jobs/turboUrgencyReminderCron.ts",
-    "turbo:reminder:prod": "node dist/jobs/turboUrgencyReminderCron.js"
+    "turbo:reminder:prod": "node dist/jobs/turboUrgencyReminderCron.js",
+    "prune:done": "tsx src/jobs/pruneDoneTasksCron.ts",
+    "prune:done:prod": "node dist/jobs/pruneDoneTasksCron.js"
   },
   "dependencies": {
     "@fastify/formbody": "^8.0.2",
