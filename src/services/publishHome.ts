@@ -5,8 +5,6 @@ import { prisma } from "../lib/prisma";
 import { homeTasksBlocks } from "../views/homeTasksBlocks";
 import { homeHeaderActionsBlocks } from "../views/homeHeaderActions";
 
-import { rolloverOverdueTasksForResponsible } from "./rolloverOverdueTasks";
-import { notifyTasksReplanned } from "./notifyTaskReplanned";
 import type { Prisma } from "../generated/prisma/browser";
 
 const SAO_PAULO_TZ = "America/Sao_Paulo";
@@ -124,28 +122,6 @@ type RawTask = {
 
 export async function publishHome(slack: WebClient, userId: string) {
   const userSlackId = userId;
-
-  // =========================================================
-  // 0) ROLLOVER + NOTIFY (replanejadas)
-  // =========================================================
-  try {
-    const result = await rolloverOverdueTasksForResponsible({ slackUserId: userSlackId });
-
-    if (result?.moved?.length) {
-      await notifyTasksReplanned({
-        slack,
-        responsibleSlackId: userSlackId,
-        items: result.moved.map((m: any) => ({
-          taskId: String(m.taskId ?? m.id ?? ""),
-          taskTitle: m.title ?? m.taskTitle ?? "",
-          fromIso: m.fromIso,
-          toIso: m.toIso,
-        })),
-      });
-    }
-  } catch (e) {
-    console.error("[publishHome] rollover/notify replanned failed:", e);
-  }
 
   // =========================================================
   // 1) Datas base
@@ -306,7 +282,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     delegation: string;
   }>;
 
-  // ✅ resolve nomes de responsible + delegation (para mostrar responsável e delegado por)
+  // ✅ resolve nomes de responsible + delegation (se você decidir usar delegationName no futuro)
   const ccNameMap = await resolveSlackNames(
     slack,
     ccTasks.flatMap((t) => [t.responsible, t.delegation])
@@ -404,7 +380,7 @@ export async function publishHome(slack: WebClient, userId: string) {
         responsible: t.responsible,
         responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅ (mesmo que CC mostre só responsável)
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,

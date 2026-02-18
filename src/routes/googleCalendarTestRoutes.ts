@@ -28,7 +28,7 @@ export async function googleCalendarTestRoutes(app: FastifyInstance) {
       calendarId,
       sendUpdates: "none", // troque pra "all" quando quiser mandar convite
       requestBody: {
-        summary: "FTA • Teste de evento (OAuth)",
+        summary: "Teste de evento (OAuth)",
         description: "Evento criado via backend TS + Google Calendar API",
         start: { dateTime: start, timeZone: "America/Sao_Paulo" },
         end: { dateTime: end, timeZone: "America/Sao_Paulo" },

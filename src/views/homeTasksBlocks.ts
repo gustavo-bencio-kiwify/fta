@@ -138,8 +138,8 @@ function myLine(t: HomeTaskItem) {
   const delegatedBy = t.delegationName
     ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
     : t.delegation
-      ? ` — delegado por ${atName(null, t.delegation)}`
-      : "";
+    ? ` — delegado por ${atName(null, t.delegation)}`
+    : "";
 
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText}${delegatedBy}`;
 }
@@ -342,6 +342,15 @@ export function homeTasksBlocks(args: {
   } else {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } } as KnownBlock);
   }
+
+  // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
+  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
+    type: "context",
+    block_id: `bottom_pad_${i}`,
+    elements: [{ type: "mrkdwn", text: " " }],
+  })) as KnownBlock[];
+
+  blocks.push(...bottomPadBlocks);
 
   return blocks;
 }

@@ -72,7 +72,10 @@ export async function runAsapUrgencyReminderCron() {
     return;
   }
 
-  const slot = `ASAP_${pad2(hour)}:${pad2(minute)}`;
+  // ✅ Em modo FORCE, use um slot fixo pra não spammar testes
+  // - você pode definir FORCE_ASAP_SLOT="ASAP_10:00" etc
+  const slot =
+    force ? process.env.FORCE_ASAP_SLOT ?? "ASAP_FORCED" : `ASAP_${pad2(hour)}:${pad2(minute)}`;
 
   const startUtc = saoPauloMidnightUtc(dateIso);
   const endUtc = new Date(startUtc);

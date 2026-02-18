@@ -139,7 +139,7 @@ export async function createCalendarEventForTask(taskId: string) {
   ]);
 
   const body = buildEventBody({
-    summary: `FTA • ${task.title}`,
+    summary: `${task.title}`,
     description: task.description ?? undefined,
     startDateIso: dateIso,
     deadlineTime: task.deadlineTime ?? null,
@@ -299,7 +299,7 @@ export async function syncCalendarEventForTask(taskId: string) {
   ]);
 
   const body = buildEventBody({
-    summary: `FTA • ${task.title}`,
+    summary: `${task.title}`,
     description: task.description ?? undefined,
     startDateIso: dateIso,
     deadlineTime: task.deadlineTime ?? null,

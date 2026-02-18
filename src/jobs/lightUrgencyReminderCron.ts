@@ -51,7 +51,7 @@ function saoPauloMidnightUtc(dateIso: string) {
 }
 
 /**
- * Light: dispara SOMENTE às 10:00 e 16:00 (SP)
+ * 🟢 Light: dispara SOMENTE às 16:00 (SP)
  */
 function isLightSlot(hour: number, minute: number) {
   if (minute !== 0) return false;
@@ -72,7 +72,10 @@ export async function runLightUrgencyReminderCron() {
     return;
   }
 
-  const slot = `LIGHT_${pad2(hour)}:${pad2(minute)}`;
+  // ✅ Em modo FORCE, use um slot fixo pra não spammar testes
+  // - você pode definir FORCE_LIGHT_SLOT="LIGHT_16:00" etc
+  const slot =
+    force ? process.env.FORCE_LIGHT_SLOT ?? "LIGHT_FORCED" : `LIGHT_${pad2(hour)}:${pad2(minute)}`;
 
   const startUtc = saoPauloMidnightUtc(dateIso);
   const endUtc = new Date(startUtc);

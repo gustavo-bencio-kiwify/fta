@@ -51,12 +51,12 @@ function saoPauloMidnightUtc(dateIso: string) {
 }
 
 /**
- * Turbo: roda a cada 30min (09:00..18:00), só deixa passar se estiver na janela.
+ * Turbo: roda a cada 30min (09:00..18:30), só deixa passar se estiver na janela.
  */
 function isWithinTurboWindow(hour: number, minute: number) {
   const total = hour * 60 + minute;
-  const start = 9 * 60;   // 09:00
-  const end = 18 * 60;    // 18:00 (inclui 18:00, exclui 18:30)
+  const start = 9 * 60; // 09:00
+  const end = 18 * 60 + 30; // ✅ 18:30 (inclui 18:30)
 
   const isHalfHour = minute === 0 || minute === 30;
   return isHalfHour && total >= start && total <= end;
@@ -76,7 +76,10 @@ export async function runTurboUrgencyReminderCron() {
     return;
   }
 
-  const slot = `TURBO_${pad2(hour)}:${pad2(minute)}`;
+  // ✅ Em modo FORCE, use um slot fixo pra não spammar testes
+  // - você pode definir FORCE_TURBO_SLOT="TURBO_09:00" etc
+  const slot =
+    force ? process.env.FORCE_TURBO_SLOT ?? "TURBO_FORCED" : `TURBO_${pad2(hour)}:${pad2(minute)}`;
 
   const startUtc = saoPauloMidnightUtc(dateIso);
   const endUtc = new Date(startUtc);
@@ -86,7 +89,7 @@ export async function runTurboUrgencyReminderCron() {
   const turboTasks = await prisma.task.findMany({
     where: {
       status: { not: "done" },
-      urgency: "turbo" as any, // se seu schema tiver enum Urgency, dá pra tipar melhor
+      urgency: "turbo" as any,
       term: { not: null, lt: endUtc },
       // ✅ evita duplicar lembrete (por dateIso + slot)
       reminders: { none: { dateIso, slot } },
@@ -102,13 +105,11 @@ export async function runTurboUrgencyReminderCron() {
   });
 
   if (!turboTasks.length) {
-    console.log(`[turbo-reminder] no turbo tasks for ${dateIso}`);
+    console.log(`[turbo-reminder] no turbo tasks for ${dateIso} • slot=${slot}`);
     return;
   }
 
-  console.log(
-    `[turbo-reminder] sending reminders: ${turboTasks.length} tasks • slot=${slot} • date=${dateIso}`
-  );
+  console.log(`[turbo-reminder] sending reminders: ${turboTasks.length} tasks • slot=${slot} • date=${dateIso}`);
 
   // ✅ 1 reminder por task (cada task tem uma thread diferente)
   await Promise.allSettled(

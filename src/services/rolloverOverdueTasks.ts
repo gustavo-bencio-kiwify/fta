@@ -10,9 +10,9 @@ type MovedItem = {
 
 const SAO_PAULO_TZ = "America/Sao_Paulo";
 
-// ✅ ALTERE AQUI O HORÁRIO DE CORTE (pra teste)
-const CUTOFF_HOUR = 17;
-const CUTOFF_MINUTE = 35; // 17:35
+// ✅ Horário de corte (20:00 SP)
+const CUTOFF_HOUR = 11;
+const CUTOFF_MINUTE = 55;
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -63,6 +63,7 @@ export async function rolloverOverdueTasksForResponsible(args: { slackUserId: st
   const cutoffMinutes = CUTOFF_HOUR * 60 + CUTOFF_MINUTE;
   const afterCutoff = nowMinutes >= cutoffMinutes;
 
+  // Pega todas as tasks abertas do responsável com prazo definido
   const tasks = await prisma.task.findMany({
     where: {
       status: { not: "done" },
