@@ -72,6 +72,7 @@ export async function createNextRecurringTaskFromCompleted(args: { completedTask
       projectId: true,
       dependsOnId: true,
       urgency: true,
+      calendarPrivate: true,
       carbonCopies: { select: { slackUserId: true, email: true } },
     },
   });
@@ -80,16 +81,54 @@ export async function createNextRecurringTaskFromCompleted(args: { completedTask
 
   const recurrence = completed.recurrence as Recurrence;
 
+  // base: se a task tinha term, usa; senão usa "hoje"
   const base = completed.term ?? toSafeUtcDateFromIso(toIsoFromDateUTC(new Date()));
   const next = nextTermFromRecurrence(base, recurrence);
+
   const nextIso = toIsoFromDateUTC(next);
   const nextSafeDate = toSafeUtcDateFromIso(nextIso);
+
+  // ✅ Anti-duplicação:
+  // se já existe uma próxima instância com a mesma recurrenceAnchor, não cria outra.
+  const existing = await prisma.task.findFirst({
+    where: {
+      status: { not: "done" },
+      recurrence: completed.recurrence as any,
+      recurrenceAnchor: nextSafeDate,
+      responsible: completed.responsible,
+      title: completed.title,
+      projectId: completed.projectId ?? null,
+      // se quiser ficar ainda mais preciso, pode descomentar:
+      // delegation: completed.delegation ?? null,
+    },
+    select: {
+      id: true,
+      title: true,
+      term: true,
+      deadlineTime: true,
+      responsible: true,
+      delegation: true,
+      carbonCopies: { select: { slackUserId: true } },
+    },
+  });
+
+  if (existing) {
+    return {
+      id: existing.id,
+      title: existing.title,
+      term: existing.term ?? null,
+      deadlineTime: existing.deadlineTime ?? null,
+      responsible: existing.responsible,
+      delegation: existing.delegation ?? null,
+      carbonCopiesSlackIds: existing.carbonCopies.map((c) => c.slackUserId),
+    };
+  }
 
   const nextTask = await prisma.task.create({
     data: {
       title: completed.title,
       description: completed.description,
-      delegation: completed.delegation,
+      delegation: completed.delegation ?? null,
       delegationEmail: completed.delegationEmail ?? null,
       responsible: completed.responsible,
       responsibleEmail: completed.responsibleEmail ?? null,
@@ -105,6 +144,8 @@ export async function createNextRecurringTaskFromCompleted(args: { completedTask
       projectId: completed.projectId ?? null,
       dependsOnId: completed.dependsOnId ?? null,
 
+      calendarPrivate: (completed as any).calendarPrivate ?? false,
+
       carbonCopies: completed.carbonCopies.length
         ? {
             createMany: {
@@ -112,16 +153,34 @@ export async function createNextRecurringTaskFromCompleted(args: { completedTask
                 slackUserId: c.slackUserId,
                 email: c.email ?? null,
               })),
+              skipDuplicates: true,
             },
           }
         : undefined,
     },
-    select: { id: true, term: true },
+    select: {
+      id: true,
+      title: true,
+      term: true,
+      deadlineTime: true,
+      responsible: true,
+      delegation: true,
+      carbonCopies: { select: { slackUserId: true } },
+    },
   });
 
+  // calendário do novo
   void syncCalendarEventForTask(nextTask.id).catch((e) => {
     console.error("[calendar] failed to create/sync event for next recurring task:", nextTask.id, e);
   });
 
-  return nextTask;
+  return {
+    id: nextTask.id,
+    title: nextTask.title,
+    term: nextTask.term ?? null,
+    deadlineTime: nextTask.deadlineTime ?? null,
+    responsible: nextTask.responsible,
+    delegation: nextTask.delegation ?? null,
+    carbonCopiesSlackIds: nextTask.carbonCopies.map((c) => c.slackUserId),
+  };
 }

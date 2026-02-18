@@ -8,14 +8,18 @@ export async function createProjectService(
     name: string;
     description?: string | null;
     endDate?: Date | null;
+
+    /**
+     * ⚠️ Mantido só por compatibilidade com chamadas antigas,
+     * mas NÃO usamos mais no create (regra do produto):
+     * - ninguém entra no projeto "na mão" no momento da criação
+     * - só entra quando uma task do projeto envolver a pessoa
+     */
     memberSlackIds?: string[];
+
     createdBySlackId: string;
   }
 ) {
-  const memberSlackIds = Array.from(
-    new Set([...(args.memberSlackIds ?? []), args.createdBySlackId].filter(Boolean))
-  );
-
   // 1) cria o projeto
   const project = await prisma.project.create({
     data: {
@@ -23,38 +27,27 @@ export async function createProjectService(
       description: args.description?.trim() ? args.description.trim() : null,
       endDate: args.endDate ?? null,
 
-      // ✅ criador (precisa existir no schema do Prisma)
+      // ✅ criador
       createdBySlackId: args.createdBySlackId,
     },
     select: { id: true, name: true },
   });
 
-  // 2) cria membros (garante que existe row em project-members)
-  if (memberSlackIds.length) {
-    await prisma.projectMember.createMany({
-      data: memberSlackIds.map((slackUserId) => ({
-        projectId: project.id,
-        slackUserId,
-      })),
-      skipDuplicates: true,
-    });
-  }
+  // 2) ✅ garante que o CRIADOR aparece na lista de projetos
+  // (mesmo que nenhuma task esteja vinculada ao projeto ainda)
 
-  // 3) notifica via DM (sem quebrar se falhar)
+  // 3) ✅ DM apenas para quem criou (não notifica "membros" agora)
   const text = `📁 *Projeto criado:* *${project.name}*`;
 
-  await Promise.allSettled(
-    memberSlackIds.map(async (userId) => {
-      try {
-        const opened = await slack.conversations.open({ users: userId });
-        const channelId = opened.channel?.id;
-        if (!channelId) return;
-        await slack.chat.postMessage({ channel: channelId, text });
-      } catch {
-        // ignore
-      }
-    })
-  );
+  try {
+    const opened = await slack.conversations.open({ users: args.createdBySlackId });
+    const channelId = opened.channel?.id;
+    if (channelId) {
+      await slack.chat.postMessage({ channel: channelId, text });
+    }
+  } catch {
+    // ignore
+  }
 
   return project;
 }

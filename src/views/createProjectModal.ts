@@ -59,6 +59,7 @@ export function createProjectModalView(): ModalView {
       {
         type: "input",
         block_id: PROJECT_MEMBERS_BLOCK_ID,
+        optional: true,
         label: { type: "plain_text", text: "Membros com acesso" },
         element: {
           type: "multi_users_select",

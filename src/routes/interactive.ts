@@ -366,7 +366,26 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const projects =
             userSlackId
               ? await prisma.project.findMany({
-                where: { status: "active", members: { some: { slackUserId: userSlackId } } },
+                where: {
+                  status: "active",
+                  OR: [
+                    // ✅ criador sempre vê
+                    { createdBySlackId: userSlackId },
+
+                    // ✅ só vê se já existe alguma task do projeto envolvendo a pessoa
+                    {
+                      tasks: {
+                        some: {
+                          OR: [
+                            { delegation: userSlackId },
+                            { responsible: userSlackId },
+                            { carbonCopies: { some: { slackUserId: userSlackId } } },
+                          ],
+                        },
+                      },
+                    },
+                  ],
+                },
                 orderBy: { name: "asc" },
                 take: 100,
                 select: { id: true, name: true },
@@ -380,6 +399,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return reply.status(200).send();
         }
+
 
         if (actionId === HOME_SEND_BATCH_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
@@ -643,8 +663,64 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           // ✅ remove da agenda (status done => sync apaga)
           void Promise.allSettled(concludedIds.map((id) => syncCalendarEventForTask(id))).catch(() => { });
 
-          // ✅ recorrência
-          await Promise.allSettled(concludedIds.map((id) => createNextRecurringTaskFromCompleted({ completedTaskId: id })));
+          // ✅ recorrência: cria a próxima e (AGORA) vamos notificar a criação
+          const nextResults = await Promise.allSettled(
+            concludedIds.map((id) => createNextRecurringTaskFromCompleted({ completedTaskId: id }))
+          );
+
+          const nextCreated = nextResults
+            .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+            .map((r) => r.value)
+            .filter(Boolean) as Array<{
+              id: string;
+              title: string;
+              term: Date | null;
+              deadlineTime: string | null;
+              responsible: string;
+              delegation: string | null;
+              carbonCopiesSlackIds: string[];
+            }>;
+
+
+          // ✅ (opcional e recomendado) não notificar se a nova task estiver bloqueada por dependsOn ainda não done
+          let nextIdsAllowedToNotify = new Set<string>();
+          if (nextCreated.length) {
+            const meta = await prisma.task.findMany({
+              where: { id: { in: nextCreated.map((n) => n.id) } },
+              select: {
+                id: true,
+                dependsOnId: true,
+                dependsOn: { select: { status: true } },
+                slackOpenMessageTs: true,
+              },
+            });
+
+            for (const m of meta) {
+              const unlocked = !m.dependsOnId || m.dependsOn?.status === "done";
+              const notYetNotified = !m.slackOpenMessageTs;
+              if (unlocked && notYetNotified) nextIdsAllowedToNotify.add(m.id);
+            }
+          }
+
+          // ✅ envia a "mensagem de criação" para a nova recorrente (todas as recorrências)
+          if (nextCreated.length) {
+            await Promise.allSettled(
+              nextCreated
+                .filter((n) => nextIdsAllowedToNotify.has(n.id))
+                .map((n) =>
+                  notifyTaskCreated({
+                    slack,
+                    taskId: n.id,
+                    createdBy: n.delegation ?? n.responsible,
+                    taskTitle: n.title,
+                    responsible: n.responsible,
+                    carbonCopies: n.carbonCopiesSlackIds ?? [],
+                    term: n.term,
+                    deadlineTime: n.deadlineTime ?? null,
+                  })
+                )
+            );
+          }
 
           // ✅ notifica conclusão (thread + botão reabrir + update "✅ Concluída")
           await Promise.allSettled(
@@ -705,11 +781,14 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             )
           );
 
+          // ✅ Home updates: inclui quem clicou + envolvidos das tasks concluídas + dependentes + novas recorrentes
           const affected = new Set<string>();
           affected.add(userSlackId);
 
           for (const t of tasksToConclude) {
+            affected.add(t.responsible);
             if (t.delegation) affected.add(t.delegation);
+            for (const c of t.carbonCopies) affected.add(c.slackUserId);
           }
 
           for (const d of dependents) {
@@ -718,10 +797,18 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             for (const c of d.carbonCopies) affected.add(c.slackUserId);
           }
 
+          // ✅ inclui envolvidos nas novas recorrentes (pra aparecer na Home de quem recebeu)
+          for (const n of nextCreated) {
+            affected.add(n.responsible);
+            if (n.delegation) affected.add(n.delegation);
+            for (const cc of n.carbonCopiesSlackIds ?? []) affected.add(cc);
+          }
+
           await Promise.allSettled(Array.from(affected).map((uid) => publishHome(slack, uid)));
 
           return reply.status(200).send();
         }
+
 
         // ---- Refresh
         if (actionId === TASKS_REFRESH_ACTION_ID) {
@@ -1187,11 +1274,28 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           // refaz options de projetos (pra manter seleção válida)
           const projects = await prisma.project.findMany({
-            where: { status: "active", members: { some: { slackUserId: userSlackId } } },
+            where: {
+              status: "active",
+              OR: [
+                { createdBySlackId: userSlackId },
+                {
+                  tasks: {
+                    some: {
+                      OR: [
+                        { delegation: userSlackId },
+                        { responsible: userSlackId },
+                        { carbonCopies: { some: { slackUserId: userSlackId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
             orderBy: { name: "asc" },
             take: 100,
             select: { id: true, name: true },
           });
+
 
           await slack.views.update({
             view_id: view.id,
@@ -1544,6 +1648,13 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           if (!taskId) return reply.send({});
 
+          // ✅ NOVO: captura prazo antigo (pra notificar corretamente na thread)
+          const before = await prisma.task.findUnique({
+            where: { id: taskId },
+            select: { term: true },
+          });
+          const fromIso = before?.term ? before.term.toISOString().slice(0, 10) : null;
+
           await rescheduleTaskService({
             taskId,
             requesterSlackId: userSlackId,
@@ -1562,7 +1673,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               req.log.error({ e, taskId }, "[RESCHEDULE] calendar sync failed");
             }
 
-            // ✅ NOVO: atualiza a mensagem principal (DM de abertura) com o novo prazo
+            // ✅ atualiza a mensagem principal (DM de abertura) com o novo prazo
             try {
               await updateTaskOpenMessage(slack, taskId);
             } catch (e) {
@@ -1576,6 +1687,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 title: true,
                 responsible: true,
                 delegation: true,
+                slackOpenChannelId: true,     // ✅ NOVO
+                slackOpenMessageTs: true,     // ✅ NOVO
                 carbonCopies: { select: { slackUserId: true } },
               },
             });
@@ -1584,15 +1697,36 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               const br = formatDateBRFromIso(newDateIso);
               const newDateBr = newTime?.trim() ? `${br} às ${newTime.trim()}` : br;
 
+              // ✅ 1) mantém DM para envolvidos (como já está)
+              const dmPromise = notifyTaskRescheduledGroup({
+                slack,
+                responsibleSlackId: after.responsible,
+                delegationSlackId: after.delegation ?? null,
+                carbonCopiesSlackIds: after.carbonCopies.map((c) => c.slackUserId),
+                taskTitle: after.title,
+                newDateBr,
+              });
+
+              // ✅ 2) NOVO: manda mensagem na thread da mensagem principal (criação)
+              const threadPromise = (async () => {
+                if (!after.slackOpenChannelId || !after.slackOpenMessageTs) return;
+
+                const oldBr = fromIso ? formatDateBRFromIso(fromIso) : null;
+                const text =
+                  oldBr
+                    ? `📅 Prazo reprogramado por <@${userSlackId}>: *${after.title}* de *${oldBr}* para *${newDateBr}*.`
+                    : `📅 Prazo reprogramado por <@${userSlackId}>: *${after.title}* para *${newDateBr}*.`;
+
+                await slack.chat.postMessage({
+                  channel: after.slackOpenChannelId,
+                  thread_ts: after.slackOpenMessageTs,
+                  text,
+                });
+              })();
+
               await Promise.allSettled([
-                notifyTaskRescheduledGroup({
-                  slack,
-                  responsibleSlackId: after.responsible,
-                  delegationSlackId: after.delegation ?? null,
-                  carbonCopiesSlackIds: after.carbonCopies.map((c) => c.slackUserId),
-                  taskTitle: after.title,
-                  newDateBr,
-                }),
+                dmPromise,
+                threadPromise,
 
                 publishHome(slack, after.responsible),
                 ...(after.delegation ? [publishHome(slack, after.delegation)] : []),
@@ -1607,6 +1741,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return;
         }
+
 
         // -------------------------
         // SEND BATCH (placeholder)

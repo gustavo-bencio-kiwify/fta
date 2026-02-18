@@ -313,10 +313,31 @@ export async function publishHome(slack: WebClient, userId: string) {
   // 6) Projetos (do usuário)
   // =========================================================
   const projects = await prisma.project.findMany({
-    where: { status: "active", members: { some: { slackUserId: userSlackId } } },
+    where: {
+      status: "active",
+      OR: [
+        // ✅ 2) criador sempre enxerga
+        { createdBySlackId: userSlackId },
+
+        // ✅ 3) só entra se tiver alguma task no projeto envolvendo a pessoa
+        {
+          tasks: {
+            some: {
+              OR: [
+                { delegation: userSlackId },
+                { responsible: userSlackId },
+                { carbonCopies: { some: { slackUserId: userSlackId } } },
+              ],
+            },
+          },
+        },
+      ],
+    },
     orderBy: { createdAt: "desc" },
     select: { id: true, name: true },
   });
+
+
 
   const projectsWithCounts = await Promise.all(
     projects.map(async (p) => {

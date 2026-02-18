@@ -305,7 +305,6 @@ export function homeTasksBlocks(args: {
         {
           type: "section",
           text: { type: "mrkdwn", text: `• ${r.title} — \`${r.recurrence}\`` },
-          accessory: { type: "button", text: { type: "plain_text", text: "❌ Cancelar" }, action_id: RECURRENCE_CANCEL_ACTION_ID, value: r.id },
         } as KnownBlock,
       ])
     );

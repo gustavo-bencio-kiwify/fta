@@ -24,6 +24,14 @@ async function postWithThread(slack: WebClient, channel: string, rootText: strin
   });
 }
 
+function uniqMentions(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)));
+}
+
+function mention(id: string) {
+  return `<@${id}>`;
+}
+
 export async function notifyTaskCanceledGroup(args: {
   slack: WebClient;
   canceledBySlackId: string;
@@ -41,8 +49,15 @@ export async function notifyTaskCanceledGroup(args: {
   // ✅ Mensagem raiz
   const rootText = `❌ Tarefa cancelada!`;
 
+  // ✅ demais envolvidos (sem duplicar e sem repetir o canceledBy)
+  const others = uniqMentions([responsibleSlackId, ...(carbonCopiesSlackIds ?? [])]).filter(
+    (id) => id !== canceledBySlackId
+  );
+
+  const othersText = others.length ? `${others.map(mention).join(", ")}` : "";
+
   // ✅ Mensagem na thread
-  const threadText = `:bell: Tarefa *${taskTitle}* cancelada por <@${canceledBySlackId}>`;
+  const threadText = `:bell: Tarefa *${taskTitle}* cancelada por ${mention(canceledBySlackId)}.\n FYI: ${othersText}`;
 
   await postWithThread(slack, channelId, rootText, threadText);
 }

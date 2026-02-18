@@ -92,7 +92,7 @@ export async function notifyTaskCompleted(args: {
   const rootDmText = `✅ A tarefa *${task.title}* foi concluída.`;
 
   const ccMentions = ccIds.map((id) => `<@${id}>`).join(", ");
-  const ccSuffix = ccIds.length ? `, com cópia para ${ccMentions}.` : ".";
+  const ccSuffix = ccIds.length ? `, com cópia para ${ccMentions}` : ".";
   const feedbackText = `<@${responsibleId}>, aqui você pode dar ou receber feedback de <@${delegationId}>${ccSuffix}. Se precisar, reabra como uma nova tarefa.`;
 
   // =========================================================
