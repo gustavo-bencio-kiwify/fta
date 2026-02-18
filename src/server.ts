@@ -9,12 +9,15 @@ import fastifyStatic from "@fastify/static";
 import { googleOAuthRoutes } from "./routes/googleOAuthRoutes";
 import { googleCalendarTestRoutes } from "./routes/googleCalendarTestRoutes";
 import { startPruneDoneTasksCron } from "./jobs/pruneDoneTasksCron";
+import { adminRoutes } from "./routes/admin";
 
 async function main() {
   const app = fastify({ logger: { level: "info" } });
 
   app.register(slackRoutes);
   app.register(sendMessage);
+  app.register(adminRoutes);
+
 
   // ✅ DEBUG rápido: se aparecer undefined aqui, achamos o culpado
   console.log("[register] googleOAuthRoutes:", typeof googleOAuthRoutes);

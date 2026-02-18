@@ -162,3 +162,15 @@ model GoogleOAuthToken {
 
   @@map("google-oauth-tokens")
 }
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String   // formato: scrypt$<salt_b64url>$<hash_b64url>
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+
+  @@index([isActive])
+  @@map("admin-users")
+}
