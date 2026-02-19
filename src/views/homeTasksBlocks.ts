@@ -16,6 +16,7 @@ export type HomeTaskItem = {
 export type DelegatedTaskItem = {
   id: string;
   title: string;
+  description?: string | null; // ✅ novo
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
@@ -25,6 +26,7 @@ export type DelegatedTaskItem = {
 export type CcTaskItem = {
   id: string;
   title: string;
+  description?: string | null; // ✅ novo
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
@@ -91,9 +93,34 @@ function atName(nameOrNull?: string | null, fallbackId?: string | null) {
 }
 
 /**
+ * ✅ Deixa o texto do checkbox em duas linhas:
+ * - Linha 1: o "line" principal
+ * - Linha 2: descrição (se existir)
+ *
+ * Isso deixa o alinhamento igual ao seu 2º print.
+ */
+function buildCheckboxText(line: string, description?: string | null) {
+  const lineClean = (line ?? "").trim().replace(/\s+/g, " ");
+  const descClean = (description ?? "").trim().replace(/\s+/g, " ");
+
+  // limites "seguros"
+  const LINE_MAX = 160;
+  const TOTAL_MAX = 260;
+
+  const lineTrunc = lineClean.slice(0, LINE_MAX);
+  if (!descClean) return lineTrunc;
+
+  const remaining = Math.max(0, TOTAL_MAX - (lineTrunc.length + 1));
+  const descTrunc = descClean.slice(0, remaining);
+
+  // coloca como 2ª linha
+  return descTrunc ? `${lineTrunc}\n${descTrunc}` : lineTrunc;
+}
+
+/**
  * ✅ Render padrão com checkbox alinhado à esquerda:
  * - usa actions + checkboxes (texto em plain_text)
- * - description, se existir, vira context embaixo (cinza)
+ * - description, se existir, vira 2ª linha do label
  */
 function renderCheckboxRow(args: {
   blockId: string;
@@ -101,7 +128,9 @@ function renderCheckboxRow(args: {
   line: string;
   description?: string | null;
 }): KnownBlock[] {
-  const blocks: KnownBlock[] = [
+  const text = buildCheckboxText(args.line, args.description);
+
+  return [
     {
       type: "actions",
       block_id: args.blockId,
@@ -111,7 +140,7 @@ function renderCheckboxRow(args: {
           action_id: TASK_SELECT_ACTION_ID,
           options: [
             {
-              text: { type: "plain_text", text: args.line.slice(0, 150) }, // evita estourar
+              text: { type: "plain_text", text },
               value: args.taskId,
             },
           ],
@@ -119,15 +148,6 @@ function renderCheckboxRow(args: {
       ],
     } as KnownBlock,
   ];
-
-  if (args.description?.trim()) {
-    blocks.push({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: args.description.trim().slice(0, 250) }],
-    } as KnownBlock);
-  }
-
-  return blocks;
 }
 
 function myLine(t: HomeTaskItem) {
@@ -175,15 +195,16 @@ function renderDelegatedItem(t: DelegatedTaskItem): KnownBlock[] {
     blockId: `delegated_${t.id}`,
     taskId: t.id,
     line: delegatedLine(t),
+    description: t.description ?? null, // ✅ agora mostra descrição aqui também
   });
 }
 
 function renderCcItem(t: CcTaskItem): KnownBlock[] {
-  // ✅ agora CC usa o mesmo padrão (actions + checkboxes) => alinhado igual os de cima
   return renderCheckboxRow({
     blockId: `cc_${t.id}`,
     taskId: t.id,
     line: ccLineOnlyResponsible(t),
+    description: t.description ?? null, // ✅ e aqui também
   });
 }
 

@@ -233,11 +233,13 @@ export async function publishHome(slack: WebClient, userId: string) {
       AND: [visibleWhere],
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    select: { id: true, title: true, term: true, urgency: true, responsible: true },
+    // ✅ agora puxa description também
+    select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true },
     take: 60,
   })) as unknown as Array<{
     id: string;
     title: string;
+    description: string | null;
     term: Date | null;
     urgency: "light" | "asap" | "turbo";
     responsible: string;
@@ -271,11 +273,13 @@ export async function publishHome(slack: WebClient, userId: string) {
       AND: [visibleWhere],
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    select: { id: true, title: true, term: true, urgency: true, responsible: true, delegation: true },
+    // ✅ agora puxa description também
+    select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true, delegation: true },
     take: 60,
   })) as unknown as Array<{
     id: string;
     title: string;
+    description: string | null;
     term: Date | null;
     urgency: "light" | "asap" | "turbo";
     responsible: string;
@@ -337,8 +341,6 @@ export async function publishHome(slack: WebClient, userId: string) {
     select: { id: true, name: true },
   });
 
-
-
   const projectsWithCounts = await Promise.all(
     projects.map(async (p) => {
       const [openCount, doneCount, overdueCount] = await Promise.all([
@@ -371,6 +373,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedToday: delegatedToday.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
@@ -379,6 +382,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedTomorrow: delegatedTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
@@ -387,6 +391,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedFuture: delegatedFuture.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
@@ -396,16 +401,18 @@ export async function publishHome(slack: WebClient, userId: string) {
       ccToday: ccToday.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
         responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅ (mesmo que CC mostre só responsável)
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
@@ -416,6 +423,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       ccFuture: ccFuture.map((t) => ({
         id: t.id,
         title: t.title,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
