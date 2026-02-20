@@ -87,6 +87,7 @@ import {
 
   type FeedbackTypeFilter,
   type FeedbackStatusFilter,
+  type FeedbackItem,
 } from "../views/feedbackModals";
 
 
@@ -250,47 +251,6 @@ async function sendBotDm(slack: WebClient, userSlackId: string, text: string) {
   await slack.chat.postMessage({ channel: channelId, text });
 }
 
-async function openDmOrMpim(slack: WebClient, userIds: string[]) {
-  const users = Array.from(new Set((userIds ?? []).filter(Boolean)));
-  if (!users.length) return null;
-  try {
-    const conv = await slack.conversations.open({ users: users.join(",") });
-    return conv.channel?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function openFeedbackDoneThread(args: {
-  slack: WebClient;
-  creatorSlackId: string;
-  adminSlackId: string;
-  feedbackId: string;
-  title: string;
-  typeLabel: string;
-}) {
-  const { slack, creatorSlackId, adminSlackId, feedbackId, title, typeLabel } = args;
-
-  const channelId = await openDmOrMpim(slack, [creatorSlackId, adminSlackId]);
-  if (!channelId) return null;
-
-  const root = await slack.chat.postMessage({
-    channel: channelId,
-    text: `✅ ${typeLabel} concluído: *${title}*\nUID: \`${feedbackId}\`\nEnvolvidos: <@${creatorSlackId}> e <@${adminSlackId}>`,
-  });
-
-  const threadTs = (root as any)?.ts as string | undefined;
-  if (threadTs) {
-    await slack.chat.postMessage({
-      channel: channelId,
-      thread_ts: threadTs,
-      text: "🧵 Use esta thread para detalhamento (o que foi feito, links, dúvidas, etc.).",
-    });
-  }
-
-  return { channelId, threadTs: threadTs ?? null };
-}
-
 
 /**
  * =========================================================
@@ -362,6 +322,32 @@ async function fetchFeedbackList(filters: FeedbackListFilters) {
       updatedAt: true,
     },
   });
+}
+
+async function fetchMyOpenFeedback(args: { createdBySlackId: string; take?: number }): Promise<FeedbackItem[]> {
+  const { createdBySlackId, take = 10 } = args;
+
+  const rows = await prisma.feedback.findMany({
+    where: {
+      createdBySlackId,
+      // ✅ "abertos" = pending ou wip
+      status: { in: ["pending", "wip"] },
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    take,
+    select: {
+      id: true,
+      type: true,
+      title: true,
+      description: true,
+      status: true,
+      createdBySlackId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return rows as any;
 }
 /**
  * =========================================================
@@ -524,6 +510,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           const filters: FeedbackListFilters = { typeFilter: "all", statusFilter: "all" };
           const items = await fetchFeedbackList(filters);
 
+          const myOpenItems = await fetchMyOpenFeedback({ createdBySlackId: userSlackId, take: 8 });
+
           await slack.views.open({
             trigger_id: payload.trigger_id,
             view: feedbackAdminModalView({
@@ -531,6 +519,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               typeFilter: filters.typeFilter,
               statusFilter: filters.statusFilter,
 	              canEdit: isFeedbackAdmin(userSlackId),
+              myOpenItems,
             }),
           });
 
@@ -549,6 +538,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             const filters = getFeedbackFiltersFromView(view);
             const items = await fetchFeedbackList(filters);
 
+            const myOpenItems = await fetchMyOpenFeedback({ createdBySlackId: userSlackId!, take: 8 });
+
             await slack.views.update({
               view_id: view.id,
               hash: view.hash,
@@ -557,6 +548,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 typeFilter: filters.typeFilter,
                 statusFilter: filters.statusFilter,
 	                canEdit: isFeedbackAdmin(userSlackId),
+                myOpenItems,
               }),
             });
           })().catch((e) => {
@@ -610,63 +602,69 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               where: { id: feedbackId },
               select: {
                 id: true,
+                status: true,
                 title: true,
                 type: true,
-                status: true,
+                description: true,
                 createdBySlackId: true,
               },
             });
 
             if (!existing) return;
 
-            // ✅ Regra: depois de concluído, não volta pra outros status
-            if (existing.status === "done") {
-              await sendBotDm(slack, userSlackId!, "✅ Este ticket já está *Concluído* e não pode ser alterado.");
+            // ✅ Regra: se já está concluído, não volta pra nenhum outro status
+            if (existing.status === "done" && nextStatus !== "done") {
+              await sendBotDm(
+                slack,
+                userSlackId!,
+                `⚠️ Este ticket já está *Concluído* e não pode voltar para outro status.`
+              );
               return;
             }
-
-            if (existing.status === nextStatus) return;
 
             await prisma.feedback.update({
               where: { id: feedbackId },
               data: { status: nextStatus as any },
             });
 
-            const typeLabel = existing.type === "bug" ? "Bug" : "Sugestão";
+            // ✅ Ao concluir: abre DM em grupo (criador + admin) e cria uma thread
+            if (existing.status !== "done" && nextStatus === "done") {
+              try {
+                const users = Array.from(new Set([existing.createdBySlackId, userSlackId!])).join(",");
+                const conv = await slack.conversations.open({ users });
+                const channelId = (conv as any)?.channel?.id as string | undefined;
 
-            // ✅ Notifica o criador sobre mudança de status
-            const statusMsg =
-              nextStatus === "wip"
-                ? `🟡 Seu ${typeLabel} entrou em *WIP* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``
-                : nextStatus === "rejected"
-                  ? `🔴 Seu ${typeLabel} foi *Rejeitado* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``
-                  : `✅ Seu ${typeLabel} foi *Concluído* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``;
+                if (channelId) {
+                  const parent = await slack.chat.postMessage({
+                    channel: channelId,
+                    text:
+                      `✅ Ticket concluído por <@${userSlackId}>
+` +
+                      `*${existing.title}*
+` +
+                      `${existing.type === "bug" ? "🐞 Bug" : "💡 Sugestão"} • ID: \`${existing.id}\``,
+                  });
 
-            await sendBotDm(slack, existing.createdBySlackId, statusMsg);
+                  const threadTs = (parent as any)?.ts as string | undefined;
+                  if (threadTs) {
+                    await slack.chat.postMessage({
+                      channel: channelId,
+                      thread_ts: threadTs,
+                      text: `👀 <@${existing.createdBySlackId}>, se quiser validar ou detalhar a entrega, responda aqui nesta thread.`,
+                    });
 
-            // ✅ Ao concluir, abre uma thread em um chat com os envolvidos
-            if (nextStatus === "done") {
-              const opened = await openFeedbackDoneThread({
-                slack,
-                creatorSlackId: existing.createdBySlackId,
-                adminSlackId: userSlackId!,
-                feedbackId: existing.id,
-                title: existing.title,
-                typeLabel,
-              });
-
-              if (!opened) {
-                // fallback caso o bot não consiga abrir MPIM (escopos/limitações)
-                await sendBotDm(
-                  slack,
-                  userSlackId!,
-                  "⚠️ Não consegui abrir um chat em grupo automaticamente para detalhamento. Você pode falar com o criador do ticket manualmente."
-                );
-                await sendBotDm(
-                  slack,
-                  existing.createdBySlackId,
-                  `⚠️ Não consegui abrir um chat em grupo automaticamente para detalhamento. Se precisar, fale com <@${userSlackId}>.`
-                );
+                    if ((existing.description ?? "").trim()) {
+                      await slack.chat.postMessage({
+                        channel: channelId,
+                        thread_ts: threadTs,
+                        text: `📝 *Descrição original:*
+${existing.description}`,
+                      });
+                    }
+                  }
+                }
+              } catch (e) {
+                console.log("[FEEDBACK] failed to open done thread", e);
               }
             }
 
@@ -675,6 +673,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
             const filters = getFeedbackFiltersFromView(view);
             const items = await fetchFeedbackList(filters);
+            const myOpenItems = userSlackId ? await fetchMyOpenFeedback({ createdBySlackId: userSlackId, take: 10 }) : [];
 
             await slack.views.update({
               view_id: view.id,
@@ -683,7 +682,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 items,
                 typeFilter: filters.typeFilter,
                 statusFilter: filters.statusFilter,
-	              canEdit: isFeedbackAdmin(userSlackId),
+                myOpenItems,
+                canEdit: isFeedbackAdmin(userSlackId),
               }),
             });
           })().catch((e) => {

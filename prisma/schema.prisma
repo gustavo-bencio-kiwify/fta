@@ -7,6 +7,137 @@ datasource db {
   provider = "postgresql"
 }
 
+model Project {
+  id               String          @id @default(uuid())
+  name             String
+  description      String?
+  endDate          DateTime?
+  createdAt        DateTime        @default(now())
+  createdBySlackId String?
+  status           ProjectStatus   @default(active)
+  concludedAt      DateTime?
+  members          ProjectMember[]
+  tasks            Task[]
+
+  @@index([createdBySlackId])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id          String   @id @default(uuid())
+  projectId   String
+  slackUserId String
+  email       String?
+  createdAt   DateTime @default(now())
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, slackUserId])
+  @@index([slackUserId])
+  @@index([projectId])
+  @@map("project-members")
+}
+
+model Task {
+  id                 String            @id @default(uuid())
+  title              String
+  description        String?
+  delegation         String
+  delegationEmail    String?
+  responsible        String
+  responsibleEmail   String?
+  term               DateTime?
+  deadlineTime       String?
+  status             TaskStatus        @default(pending)
+  recurrence         Recurrence?
+  urgency            Urgency
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @default(now()) @updatedAt
+  projectId          String?
+  recurrenceAnchor   DateTime?
+  dependsOnId        String?
+  slackOpenChannelId String?
+  slackOpenMessageTs String?
+  googleEventId      String?
+  googleEventLink    String?
+  calendarPrivate    Boolean           @default(false)
+  carbonCopies       TaskCarbonCopy[]
+  reminders          TaskReminderLog[]
+  dependsOn          Task?             @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
+  dependents         Task[]            @relation("TaskDependsOn")
+  project            Project?          @relation(fields: [projectId], references: [id])
+
+  @@map("tasks")
+}
+
+model TaskCarbonCopy {
+  id          String   @id @default(uuid())
+  taskId      String
+  slackUserId String
+  email       String?
+  createdAt   DateTime @default(now())
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, slackUserId])
+  @@index([slackUserId])
+  @@index([taskId])
+  @@map("task-carbon-copies")
+}
+
+model TaskReminderLog {
+  id        String   @id @default(uuid())
+  taskId    String
+  dateIso   String
+  slot      String
+  createdAt DateTime @default(now())
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dateIso, slot])
+  @@index([dateIso, slot])
+  @@index([taskId])
+  @@map("task-reminder-logs")
+}
+
+model GoogleOAuthToken {
+  id           String    @id
+  refreshToken String
+  accessToken  String?
+  scope        String?
+  tokenType    String?
+  expiryDate   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("google-oauth-tokens")
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  lastLoginAt  DateTime?
+
+  @@index([isActive])
+  @@map("admin-users")
+}
+
+model Feedback {
+  id               String         @id @default(cuid())
+  type             FeedbackType
+  title            String
+  description      String
+  status           FeedbackStatus @default(pending)
+  createdBySlackId String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([type])
+  @@map("feedbacks")
+}
+
 enum Urgency {
   light
   asap
@@ -36,145 +167,6 @@ enum ProjectStatus {
   concluded
 }
 
-model Project {
-  id          String    @id @default(uuid())
-  name        String
-  description String?
-  endDate     DateTime?
-  createdAt   DateTime  @default(now())
-
-  // ✅ criador do projeto
-  createdBySlackId String?
-
-  status      ProjectStatus @default(active)
-  concludedAt DateTime?
-
-  tasks   Task[]
-  members ProjectMember[]
-
-  @@index([createdBySlackId])
-  @@map("projects")
-}
-
-model ProjectMember {
-  id        String  @id @default(uuid())
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  slackUserId String
-  email       String?
-
-  createdAt DateTime @default(now())
-
-  @@unique([projectId, slackUserId])
-  @@index([slackUserId])
-  @@index([projectId])
-  @@map("project-members")
-}
-
-model Task {
-  id          String  @id @default(uuid())
-  title       String
-  description String?
-
-  delegation      String
-  delegationEmail String?
-
-  responsible      String
-  responsibleEmail String?
-
-  term         DateTime?
-  deadlineTime String?
-
-  status     TaskStatus  @default(pending)
-  recurrence Recurrence?
-
-  urgency   Urgency
-  createdAt DateTime @default(now())
-
-  // ✅ IMPORTANTE: default pra não quebrar dados antigos
-  updatedAt DateTime @default(now()) @updatedAt
-
-  projectId String?
-  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-
-  carbonCopies TaskCarbonCopy[]
-  reminders    TaskReminderLog[]
-
-  recurrenceAnchor DateTime?
-  dependsOnId      String?
-  dependsOn        Task?     @relation("TaskDependsOn", fields: [dependsOnId], references: [id])
-  dependents       Task[]    @relation("TaskDependsOn")
-
-  // ✅ thread da abertura (pra reminders)
-  slackOpenChannelId String?
-  slackOpenMessageTs String?
-  googleEventId      String?
-  googleEventLink    String?
-  calendarPrivate    Boolean @default(false)
-
-  @@map("tasks")
-}
-
-model TaskCarbonCopy {
-  id     String @id @default(uuid())
-  taskId String
-  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
-  slackUserId String
-  email       String?
-
-  createdAt DateTime @default(now())
-
-  @@unique([taskId, slackUserId])
-  @@index([slackUserId])
-  @@index([taskId])
-  @@map("task-carbon-copies")
-}
-
-model TaskReminderLog {
-  id String @id @default(uuid())
-
-  taskId String
-  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
-  dateIso String
-  slot    String
-
-  createdAt DateTime @default(now())
-
-  @@unique([taskId, dateIso, slot])
-  @@index([dateIso, slot])
-  @@index([taskId])
-  @@map("task-reminder-logs")
-}
-
-model GoogleOAuthToken {
-  id           String    @id // vamos usar "default" como chave única
-  refreshToken String
-  accessToken  String?
-  scope        String?
-  tokenType    String?
-  expiryDate   DateTime? // quando expira o access_token
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("google-oauth-tokens")
-}
-
-model AdminUser {
-  id           String    @id @default(uuid())
-  username     String    @unique
-  passwordHash String // formato: scrypt$<salt_b64url>$<hash_b64url>
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  lastLoginAt  DateTime?
-
-  @@index([isActive])
-  @@map("admin-users")
-}
-
 enum FeedbackType {
   bug
   suggestion
@@ -185,21 +177,4 @@ enum FeedbackStatus {
   wip
   done
   rejected
-}
-
-model Feedback {
-  id          String         @id @default(cuid())
-  type        FeedbackType
-  title       String
-  description String
-  status      FeedbackStatus @default(pending)
-
-  createdBySlackId String
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@index([createdAt])
-  @@index([status])
-  @@index([type])
-  @@map("feedbacks")
 }

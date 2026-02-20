@@ -67,6 +67,25 @@ function labelStatus(s: FeedbackItem["status"]) {
   }
 }
 
+function emojiType(t: FeedbackItem["type"]) {
+  return t === "bug" ? "🐞" : "💡";
+}
+
+function emojiStatus(s: FeedbackItem["status"]) {
+  switch (s) {
+    case "pending":
+      return "🟠";
+    case "wip":
+      return "🟡";
+    case "done":
+      return "🟢";
+    case "rejected":
+      return "🔴";
+    default:
+      return "";
+  }
+}
+
 function truncate(s: string, max = 160) {
   const t = (s ?? "").trim();
   if (t.length <= max) return t;
@@ -156,10 +175,12 @@ export function feedbackAdminModalView(args: {
   items: FeedbackItem[];
   typeFilter: FeedbackTypeFilter;
   statusFilter: FeedbackStatusFilter;
+  /** tickets abertos criados pelo usuário (pending/wip) */
+  myOpenItems?: FeedbackItem[];
   /** true => mostra controles de mudança de status */
   canEdit?: boolean;
 }): ModalView {
-  const { items, typeFilter, statusFilter, canEdit = false } = args;
+  const { items, typeFilter, statusFilter, myOpenItems = [], canEdit = false } = args;
 
   const typeOptions = [
     { text: { type: "plain_text", text: ":clipboard: Todos" }, value: "all" },
@@ -183,6 +204,34 @@ export function feedbackAdminModalView(args: {
       type: "section",
       text: { type: "mrkdwn", text: "💡🐞*Bugs & Sugestões*  \nUse os filtros para refinar a lista." },
     },
+  ];
+
+  // ✅ Meus tickets abertos (sempre aparece pra todos)
+  const mine = (myOpenItems ?? []).filter((x) => x && x.status !== "done" && x.status !== "rejected");
+  if (mine.length) {
+    const MAX_MINE = 10;
+    const shown = mine.slice(0, MAX_MINE);
+
+    const lines = shown.map((t) => {
+      const st = t.status === "pending" ? "🟠" : "🟡"; // pending/wip
+      return `• ${emojiType(t.type)} ${st} ${truncate(t.title, 70)}`;
+    });
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          `🧾 *Meus tickets abertos* (${mine.length})\n` +
+          lines.join("\n") +
+          (mine.length > MAX_MINE ? `\n_+${mine.length - MAX_MINE} outros…_` : ""),
+      },
+    });
+    blocks.push({ type: "divider" });
+  }
+
+  // ✅ Filtros
+  blocks.push(
     {
       type: "input",
       block_id: FEEDBACK_ADMIN_FILTER_TYPE_BLOCK_ID,
@@ -192,7 +241,7 @@ export function feedbackAdminModalView(args: {
         type: "static_select",
         action_id: FEEDBACK_ADMIN_FILTER_TYPE_ACTION_ID,
         options: typeOptions,
-        initial_option: initialType, // ✅ precisa ser item de options
+        initial_option: initialType,
       },
     },
     {
@@ -204,14 +253,13 @@ export function feedbackAdminModalView(args: {
         type: "static_select",
         action_id: FEEDBACK_ADMIN_FILTER_STATUS_ACTION_ID,
         options: statusOptions,
-        initial_option: initialStatus, // ✅ precisa ser item de options
+        initial_option: initialStatus,
       },
     },
-    { type: "divider" },
-  ];
+    { type: "divider" }
+  );
 
-  // ⚠️ Slack tem limite de ~100 blocks por view.
-  // Cada item usa 2 blocks (section + divider), então vamos limitar.
+  // ⚠️ Slack: limite ~100 blocks por view
   const MAX_ITEMS = 45;
   const visible = (items ?? []).slice(0, MAX_ITEMS);
 
@@ -224,28 +272,26 @@ export function feedbackAdminModalView(args: {
     if ((items ?? []).length > MAX_ITEMS) {
       blocks.push({
         type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: `_Mostrando ${MAX_ITEMS} de ${(items ?? []).length} itens (limite do Slack)._`,
-          },
-        ],
+        elements: [{ type: "mrkdwn", text: `_Mostrando ${MAX_ITEMS} de ${(items ?? []).length} itens (limite do Slack)._` }],
       });
       blocks.push({ type: "divider" });
     }
 
     for (const f of visible) {
       const header = `*${truncate(f.title, 120)}*`;
-      const meta = `${labelType(f.type)} • *${labelStatus(f.status)}* • <@${f.createdBySlackId}> • ${formatDate(
-        new Date(f.createdAt)
-      )}`;
+      const meta = `${emojiType(f.type)} ${labelType(f.type)} • ${emojiStatus(f.status)} *${labelStatus(
+        f.status
+      )}* • <@${f.createdBySlackId}> • ${formatDate(new Date(f.createdAt))}`;
       const desc = truncate(f.description ?? "", 220);
+
+      // ✅ Regra: se estiver Done, não mostra menu (não volta de status)
+      const showMenu = canEdit && f.status !== "done";
 
       blocks.push(
         {
           type: "section",
           text: { type: "mrkdwn", text: `${header}\n_${meta}_\n${desc}` },
-          ...(canEdit
+          ...(showMenu
             ? {
                 accessory: {
                   type: "overflow",

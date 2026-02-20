@@ -13,23 +13,6 @@ const SAO_PAULO_TZ = "America/Sao_Paulo";
 const MAX_TASKS_PER_SECTION = 8;
 
 // =========================================================
-// ✅ FEEDBACK ADMINS
-// - controla quem vê o botão "📋 Ver bugs/sugestões"
-// =========================================================
-function parseFeedbackAdminsFromEnv() {
-  return new Set(
-    String(process.env.FEEDBACK_ADMIN_SLACK_IDS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
-}
-function isFeedbackAdmin(slackUserId: string) {
-  if (!slackUserId) return false;
-  return parseFeedbackAdminsFromEnv().has(slackUserId);
-}
-
-// =========================================================
 // ✅ Slack ID -> Nome (cache)
 // - precisa do scope: users:read
 // - dentro do checkbox é plain_text, então não existe mention real.
@@ -317,15 +300,13 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   // =========================================================
   // 5) Recorrências (lista)
-  // ✅ FIX: NÃO aplica excludeSelfDelegatedFromResponsible aqui,
-  //         senão suas recorrentes "criadas por você" somem.
   // =========================================================
   const recurrenceTasks = (await prisma.task.findMany({
     where: {
       responsible: userSlackId,
       status: { not: "done" },
       recurrence: { not: null },
-      AND: [visibleWhere], // ✅ sem excludeSelfDelegatedFromResponsible
+      AND: [visibleWhere, excludeSelfDelegatedFromResponsible],
     },
     orderBy: [{ createdAt: "desc" }],
     select: { id: true, title: true, recurrence: true },
@@ -339,7 +320,10 @@ export async function publishHome(slack: WebClient, userId: string) {
     where: {
       status: "active",
       OR: [
+        // ✅ criador sempre enxerga
         { createdBySlackId: userSlackId },
+
+        // ✅ só entra se tiver alguma task no projeto envolvendo a pessoa
         {
           tasks: {
             some: {
@@ -377,6 +361,19 @@ export async function publishHome(slack: WebClient, userId: string) {
   );
 
   // =========================================================
+  // ✅ 6.5) Feedback: meus tickets abertos (pending/wip)
+  // =========================================================
+  const myOpenFeedback = await prisma.feedback.findMany({
+    where: {
+      createdBySlackId: userSlackId,
+      status: { in: ["pending", "wip"] as any },
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    take: 8,
+    select: { id: true, type: true, title: true, status: true, updatedAt: true },
+  });
+
+  // =========================================================
   // 7) Render Home
   // =========================================================
   const blocks = homeHeaderActionsBlocks().concat(
@@ -389,71 +386,75 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedToday: delegatedToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
       delegatedTomorrow: delegatedTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
       delegatedFuture: delegatedFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
       })),
 
       ccToday: ccToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
       ccFuture: ccFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description,
+        description: t.description, // ✅
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null,
+        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null,
+        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
       })),
 
       recurrences: recurrenceTasks.map((r) => ({ id: r.id, title: r.title, recurrence: r.recurrence })),
-
       projects: projectsWithCounts,
 
-      // ✅ novo: só admins veem o botão de listar / editar
-      showFeedbackAdminButton: isFeedbackAdmin(userSlackId),
+      myOpenFeedback: myOpenFeedback.map((f) => ({
+        id: f.id,
+        type: f.type as any,
+        title: f.title,
+        status: f.status as any,
+        updatedAt: f.updatedAt,
+      })),
     })
   );
 

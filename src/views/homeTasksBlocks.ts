@@ -49,6 +49,17 @@ export type ProjectItem = {
   overdueCount: number;
 };
 
+// =========================
+// ✅ Feedback (Home)
+// =========================
+export type FeedbackHomeItem = {
+  id: string;
+  type: "bug" | "suggestion";
+  title: string;
+  status: "pending" | "wip" | "done" | "rejected";
+  updatedAt?: Date | string | null;
+};
+
 export const TASK_SELECT_ACTION_ID = "task_select" as const;
 
 export const TASKS_CONCLUDE_SELECTED_ACTION_ID = "tasks_conclude_selected" as const;
@@ -67,6 +78,7 @@ export const CC_SEND_QUESTION_ACTION_ID = "cc_send_question" as const;
 export const RECURRENCE_CANCEL_ACTION_ID = "recurrence_cancel" as const;
 export const HOME_FEEDBACK_OPEN_ACTION_ID = "home_feedback_open" as const;
 export const HOME_FEEDBACK_ADMIN_ACTION_ID = "home_feedback_admin" as const;
+
 export const PROJECT_VIEW_ACTION_ID = "project_view" as const;
 export const PROJECT_CREATE_TASK_ACTION_ID = "project_create_task" as const;
 export const PROJECT_EDIT_ACTION_ID = "project_edit" as const;
@@ -93,12 +105,36 @@ function atName(nameOrNull?: string | null, fallbackId?: string | null) {
   return fb ? `@${fb}` : "";
 }
 
+function escapeMrkdwn(s: string) {
+  return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function truncate(s: string, max = 70) {
+  const t = (s ?? "").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1) + "…";
+}
+
+function feedbackTypeEmoji(t: FeedbackHomeItem["type"]) {
+  return t === "bug" ? "🐞" : "💡";
+}
+function feedbackStatusEmoji(s: FeedbackHomeItem["status"]) {
+  if (s === "pending") return "🟠";
+  if (s === "wip") return "🟡";
+  if (s === "done") return "🟢";
+  return "🔴";
+}
+function feedbackStatusLabel(s: FeedbackHomeItem["status"]) {
+  if (s === "pending") return "Pendente";
+  if (s === "wip") return "WIP";
+  if (s === "done") return "Concluído";
+  return "Rejeitado";
+}
+
 /**
  * ✅ Deixa o texto do checkbox em duas linhas:
  * - Linha 1: o "line" principal
  * - Linha 2: descrição (se existir)
- *
- * Isso deixa o alinhamento igual ao seu 2º print.
  */
 function buildCheckboxText(line: string, description?: string | null) {
   const lineClean = (line ?? "").trim().replace(/\s+/g, " ");
@@ -196,7 +232,7 @@ function renderDelegatedItem(t: DelegatedTaskItem): KnownBlock[] {
     blockId: `delegated_${t.id}`,
     taskId: t.id,
     line: delegatedLine(t),
-    description: t.description ?? null, // ✅ agora mostra descrição aqui também
+    description: t.description ?? null,
   });
 }
 
@@ -205,7 +241,7 @@ function renderCcItem(t: CcTaskItem): KnownBlock[] {
     blockId: `cc_${t.id}`,
     taskId: t.id,
     line: ccLineOnlyResponsible(t),
-    description: t.description ?? null, // ✅ e aqui também
+    description: t.description ?? null,
   });
 }
 
@@ -215,6 +251,34 @@ function renderGroup(title: string, blocksInside: KnownBlock[]): KnownBlock[] {
     ...(blocksInside.length
       ? blocksInside
       : [({ type: "section", text: { type: "mrkdwn", text: "_Nenhuma_" } } as KnownBlock)]),
+  ];
+}
+
+function renderMyOpenFeedback(items: FeedbackHomeItem[]): KnownBlock[] {
+  const MAX = 6;
+  const visible = (items ?? []).slice(0, MAX);
+
+  if (!visible.length) {
+    return [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "_Você não tem tickets abertos._" },
+      } as KnownBlock,
+    ];
+  }
+
+  const lines = visible.map((f) => {
+    const title = escapeMrkdwn(truncate(f.title, 60));
+    return `• ${feedbackTypeEmoji(f.type)} *${title}* — ${feedbackStatusEmoji(f.status)} ${feedbackStatusLabel(f.status)}`;
+  });
+
+  const suffix = (items?.length ?? 0) > MAX ? `\n_… e mais ${(items.length - MAX)}_` : "";
+
+  return [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: lines.join("\n") + suffix },
+    } as KnownBlock,
   ];
 }
 
@@ -240,7 +304,9 @@ export function homeTasksBlocks(args: {
 
   // projetos
   projects: ProjectItem[];
-  showFeedbackAdminButton?: boolean;
+
+  // ✅ feedback
+  myOpenFeedback?: FeedbackHomeItem[];
 }): KnownBlock[] {
   const blocks: KnownBlock[] = [];
 
@@ -372,6 +438,13 @@ export function homeTasksBlocks(args: {
   // =========================
   pushHeader("💡 Bugs e sugestões");
 
+  // ✅ lista dos tickets que eu abri e ainda não concluí
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: "*Seus tickets abertos:*" },
+  } as KnownBlock);
+  blocks.push(...renderMyOpenFeedback(args.myOpenFeedback ?? []));
+
   const feedbackButtons: any[] = [
     {
       type: "button",
@@ -379,16 +452,13 @@ export function homeTasksBlocks(args: {
       action_id: HOME_FEEDBACK_OPEN_ACTION_ID,
       value: "open_feedback",
     },
-  ];
-
-  if (args.showFeedbackAdminButton) {
-    feedbackButtons.push({
+    {
       type: "button",
       text: { type: "plain_text", text: "📋 Ver bugs/sugestões" },
       action_id: HOME_FEEDBACK_ADMIN_ACTION_ID,
-      value: "admin_feedback",
-    });
-  }
+      value: "view_feedback",
+    },
+  ];
 
   blocks.push({
     type: "actions",
