@@ -518,7 +518,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               items,
               typeFilter: filters.typeFilter,
               statusFilter: filters.statusFilter,
-	              canEdit: isFeedbackAdmin(userSlackId),
+              canEdit: isFeedbackAdmin(userSlackId),
               myOpenItems,
             }),
           });
@@ -547,7 +547,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                 items,
                 typeFilter: filters.typeFilter,
                 statusFilter: filters.statusFilter,
-	                canEdit: isFeedbackAdmin(userSlackId),
+                canEdit: isFeedbackAdmin(userSlackId),
                 myOpenItems,
               }),
             });
@@ -567,21 +567,18 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           actionId === FEEDBACK_SET_DONE_ACTION_ID ||
           actionId === FEEDBACK_STATUS_MENU_ACTION_ID
         ) {
-          // ACK rápido
-          reply.status(200).send();
+          reply.status(200).send(); // ACK
 
           void (async () => {
             let feedbackId = "";
             let nextStatus: "rejected" | "wip" | "done" | null = null;
 
-            // menu: value = "<id>|<status>"
             if (actionId === FEEDBACK_STATUS_MENU_ACTION_ID) {
               const raw = String(action?.selected_option?.value ?? "");
               const [id, st] = raw.split("|");
               feedbackId = String(id ?? "").trim();
               if (st === "rejected" || st === "wip" || st === "done") nextStatus = st;
             } else {
-              // botões: value = "<id>" e status vem do actionId
               feedbackId = String(action?.value ?? "").trim();
               nextStatus =
                 actionId === FEEDBACK_SET_REJECTED_ACTION_ID
@@ -614,13 +611,11 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
             // ✅ Regra: se já está concluído, não volta pra nenhum outro status
             if (existing.status === "done" && nextStatus !== "done") {
-              await sendBotDm(
-                slack,
-                userSlackId!,
-                `⚠️ Este ticket já está *Concluído* e não pode voltar para outro status.`
-              );
+              await sendBotDm(slack, userSlackId!, `⚠️ Este ticket já está *Concluído* e não pode voltar para outro status.`);
               return;
             }
+
+            if (existing.status === nextStatus) return;
 
             await prisma.feedback.update({
               where: { id: feedbackId },
@@ -638,10 +633,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                   const parent = await slack.chat.postMessage({
                     channel: channelId,
                     text:
-                      `✅ Ticket concluído por <@${userSlackId}>
-` +
-                      `*${existing.title}*
-` +
+                      `✅ Ticket concluído por <@${userSlackId}>\n` +
+                      `*${existing.title}*\n` +
                       `${existing.type === "bug" ? "🐞 Bug" : "💡 Sugestão"} • ID: \`${existing.id}\``,
                   });
 
@@ -657,42 +650,65 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                       await slack.chat.postMessage({
                         channel: channelId,
                         thread_ts: threadTs,
-                        text: `📝 *Descrição original:*
-${existing.description}`,
+                        text: `📝 *Descrição original:*\n${existing.description}`,
                       });
                     }
                   }
                 }
               } catch (e) {
-                console.log("[FEEDBACK] failed to open done thread", e);
+                req.log.error({ e }, "[FEEDBACK] failed to open done thread");
               }
             }
 
+            // ✅ Atualiza o modal (lista)
             const view = payload.view;
-            if (!view?.id) return;
+            if (view?.id) {
+              const filters = getFeedbackFiltersFromView(view);
+              const items = await fetchFeedbackList(filters);
+              const myOpenItems = userSlackId
+                ? await fetchMyOpenFeedback({ createdBySlackId: userSlackId, take: 10 })
+                : [];
 
-            const filters = getFeedbackFiltersFromView(view);
-            const items = await fetchFeedbackList(filters);
-            const myOpenItems = userSlackId ? await fetchMyOpenFeedback({ createdBySlackId: userSlackId, take: 10 }) : [];
+              await slack.views.update({
+                view_id: view.id,
+                hash: view.hash,
+                view: feedbackAdminModalView({
+                  items,
+                  typeFilter: filters.typeFilter,
+                  statusFilter: filters.statusFilter,
+                  myOpenItems,
+                  canEdit: isFeedbackAdmin(userSlackId),
+                }),
+              });
+            }
 
-            await slack.views.update({
-              view_id: view.id,
-              hash: view.hash,
-              view: feedbackAdminModalView({
-                items,
-                typeFilter: filters.typeFilter,
-                statusFilter: filters.statusFilter,
-                myOpenItems,
-                canEdit: isFeedbackAdmin(userSlackId),
-              }),
-            });
+            // ✅ AGORA SIM: Atualiza a HOME (criador + admin + admins)
+            const affected = new Set<string>();
+            affected.add(existing.createdBySlackId);
+            if (userSlackId) affected.add(userSlackId);
+
+            // opcional, mas recomendado: atualiza home de todos admins também
+            for (const a of getFeedbackAdminIds()) affected.add(a);
+
+            const results = await Promise.allSettled(Array.from(affected).map((uid) => publishHome(slack, uid)));
+
+            // loga se algum publish falhar (pra você ver o motivo)
+            const failed = results
+              .map((r, i) => ({ r, uid: Array.from(affected)[i] }))
+              .filter((x) => x.r.status === "rejected");
+
+            if (failed.length) {
+              req.log.error(
+                { failed: failed.map((f) => ({ uid: f.uid, reason: (f.r as PromiseRejectedResult).reason })) },
+                "[FEEDBACK] publishHome failed for some users"
+              );
+            }
           })().catch((e) => {
             req.log.error({ e }, "[FEEDBACK] status update failed");
           });
 
           return;
         }
-
 
         // ---- Topo (Home Header)
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
