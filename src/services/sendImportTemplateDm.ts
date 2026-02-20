@@ -13,7 +13,7 @@ async function openDm(slack: WebClient, userId: string) {
 export async function sendImportTemplateDm(slack: WebClient, userSlackId: string) {
   const channelId = await openDm(slack, userSlackId);
 
-  const filePath = path.join(process.cwd(), "src", "assets", "tasks_import_template.xlsx");
+  const filePath = path.join(process.cwd(), "src", "public", "Template_Import_Tasks.xlsx");
   const fileBuf = fs.readFileSync(filePath);
 
   // Upload do arquivo (Slack mostra o arquivo clicável pra download)

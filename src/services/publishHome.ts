@@ -13,6 +13,23 @@ const SAO_PAULO_TZ = "America/Sao_Paulo";
 const MAX_TASKS_PER_SECTION = 8;
 
 // =========================================================
+// ✅ FEEDBACK ADMINS
+// - controla quem vê o botão "📋 Ver bugs/sugestões"
+// =========================================================
+function parseFeedbackAdminsFromEnv() {
+  return new Set(
+    String(process.env.FEEDBACK_ADMIN_SLACK_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+function isFeedbackAdmin(slackUserId: string) {
+  if (!slackUserId) return false;
+  return parseFeedbackAdminsFromEnv().has(slackUserId);
+}
+
+// =========================================================
 // ✅ Slack ID -> Nome (cache)
 // - precisa do scope: users:read
 // - dentro do checkbox é plain_text, então não existe mention real.
@@ -286,7 +303,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     delegation: string;
   }>;
 
-  // ✅ resolve nomes de responsible + delegation (se você decidir usar delegationName no futuro)
+  // ✅ resolve nomes de responsible + delegation
   const ccNameMap = await resolveSlackNames(
     slack,
     ccTasks.flatMap((t) => [t.responsible, t.delegation])
@@ -300,13 +317,15 @@ export async function publishHome(slack: WebClient, userId: string) {
 
   // =========================================================
   // 5) Recorrências (lista)
+  // ✅ FIX: NÃO aplica excludeSelfDelegatedFromResponsible aqui,
+  //         senão suas recorrentes "criadas por você" somem.
   // =========================================================
   const recurrenceTasks = (await prisma.task.findMany({
     where: {
       responsible: userSlackId,
       status: { not: "done" },
       recurrence: { not: null },
-      AND: [visibleWhere, excludeSelfDelegatedFromResponsible],
+      AND: [visibleWhere], // ✅ sem excludeSelfDelegatedFromResponsible
     },
     orderBy: [{ createdAt: "desc" }],
     select: { id: true, title: true, recurrence: true },
@@ -320,10 +339,7 @@ export async function publishHome(slack: WebClient, userId: string) {
     where: {
       status: "active",
       OR: [
-        // ✅ 2) criador sempre enxerga
         { createdBySlackId: userSlackId },
-
-        // ✅ 3) só entra se tiver alguma task no projeto envolvendo a pessoa
         {
           tasks: {
             some: {
@@ -373,68 +389,71 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedToday: delegatedToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
       delegatedTomorrow: delegatedTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
       delegatedFuture: delegatedFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
 
       ccToday: ccToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
       ccFuture: ccFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
 
       recurrences: recurrenceTasks.map((r) => ({ id: r.id, title: r.title, recurrence: r.recurrence })),
 
       projects: projectsWithCounts,
+
+      // ✅ novo: só admins veem o botão de listar / editar
+      showFeedbackAdminButton: isFeedbackAdmin(userSlackId),
     })
   );
 

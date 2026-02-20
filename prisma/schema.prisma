@@ -164,13 +164,42 @@ model GoogleOAuthToken {
 }
 
 model AdminUser {
-  id           String   @id @default(uuid())
-  username     String   @unique
-  passwordHash String   // formato: scrypt$<salt_b64url>$<hash_b64url>
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String // formato: scrypt$<salt_b64url>$<hash_b64url>
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
   lastLoginAt  DateTime?
 
   @@index([isActive])
   @@map("admin-users")
+}
+
+enum FeedbackType {
+  bug
+  suggestion
+}
+
+enum FeedbackStatus {
+  pending
+  wip
+  done
+  rejected
+}
+
+model Feedback {
+  id          String         @id @default(cuid())
+  type        FeedbackType
+  title       String
+  description String
+  status      FeedbackStatus @default(pending)
+
+  createdBySlackId String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([type])
+  @@map("feedbacks")
 }

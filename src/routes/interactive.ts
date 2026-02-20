@@ -48,6 +48,8 @@ import {
   TASKS_RESCHEDULE_ACTION_ID,
   TASKS_VIEW_DETAILS_ACTION_ID,
   TASKS_REFRESH_ACTION_ID,
+  HOME_FEEDBACK_OPEN_ACTION_ID,      // ✅ ADD
+  HOME_FEEDBACK_ADMIN_ACTION_ID,     // ✅ ADD
   // placeholders
   DELEGATED_SEND_FUP_ACTION_ID,
   DELEGATED_EDIT_ACTION_ID,
@@ -59,6 +61,34 @@ import {
   PROJECT_EDIT_ACTION_ID,
   PROJECT_CONCLUDE_ACTION_ID,
 } from "../views/homeTasksBlocks";
+
+import {
+  feedbackCreateModalView,
+  feedbackAdminModalView,
+
+  FEEDBACK_CREATE_CALLBACK_ID,
+
+  FEEDBACK_TYPE_SELECT_ACTION_ID,
+  FEEDBACK_TYPE_BLOCK_ID,
+  FEEDBACK_TITLE_BLOCK_ID,
+  FEEDBACK_DESC_BLOCK_ID,
+  FEEDBACK_TITLE_INPUT_ACTION_ID,
+  FEEDBACK_DESC_INPUT_ACTION_ID,
+
+  FEEDBACK_ADMIN_FILTER_TYPE_BLOCK_ID,
+  FEEDBACK_ADMIN_FILTER_TYPE_ACTION_ID,
+  FEEDBACK_ADMIN_FILTER_STATUS_BLOCK_ID,
+  FEEDBACK_ADMIN_FILTER_STATUS_ACTION_ID,
+
+  FEEDBACK_SET_REJECTED_ACTION_ID,
+  FEEDBACK_SET_WIP_ACTION_ID,
+  FEEDBACK_SET_DONE_ACTION_ID,
+  FEEDBACK_STATUS_MENU_ACTION_ID,
+
+  type FeedbackTypeFilter,
+  type FeedbackStatusFilter,
+} from "../views/feedbackModals";
+
 
 import {
   rescheduleTaskModalView,
@@ -220,6 +250,119 @@ async function sendBotDm(slack: WebClient, userSlackId: string, text: string) {
   await slack.chat.postMessage({ channel: channelId, text });
 }
 
+async function openDmOrMpim(slack: WebClient, userIds: string[]) {
+  const users = Array.from(new Set((userIds ?? []).filter(Boolean)));
+  if (!users.length) return null;
+  try {
+    const conv = await slack.conversations.open({ users: users.join(",") });
+    return conv.channel?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function openFeedbackDoneThread(args: {
+  slack: WebClient;
+  creatorSlackId: string;
+  adminSlackId: string;
+  feedbackId: string;
+  title: string;
+  typeLabel: string;
+}) {
+  const { slack, creatorSlackId, adminSlackId, feedbackId, title, typeLabel } = args;
+
+  const channelId = await openDmOrMpim(slack, [creatorSlackId, adminSlackId]);
+  if (!channelId) return null;
+
+  const root = await slack.chat.postMessage({
+    channel: channelId,
+    text: `✅ ${typeLabel} concluído: *${title}*\nUID: \`${feedbackId}\`\nEnvolvidos: <@${creatorSlackId}> e <@${adminSlackId}>`,
+  });
+
+  const threadTs = (root as any)?.ts as string | undefined;
+  if (threadTs) {
+    await slack.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text: "🧵 Use esta thread para detalhamento (o que foi feito, links, dúvidas, etc.).",
+    });
+  }
+
+  return { channelId, threadTs: threadTs ?? null };
+}
+
+
+/**
+ * =========================================================
+ * ✅ FEEDBACK PERMISSIONS + LIST HELPERS
+ * - Todos podem ver a lista
+ * - Só admins (env FEEDBACK_ADMIN_SLACK_IDS) podem mudar status
+ * =========================================================
+ */
+const FEEDBACK_LIST_TAKE = 25;
+
+function getFeedbackAdminIds(): string[] {
+  const raw = String(process.env.FEEDBACK_ADMIN_SLACK_IDS ?? "").trim();
+  if (!raw) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[,\s]+/g)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function isFeedbackAdmin(slackUserId: string | undefined | null): boolean {
+  if (!slackUserId) return false;
+  const admins = getFeedbackAdminIds();
+  return admins.includes(slackUserId);
+}
+
+type FeedbackListFilters = {
+  typeFilter: FeedbackTypeFilter;
+  statusFilter: FeedbackStatusFilter;
+};
+
+function getFeedbackFiltersFromView(view: any): FeedbackListFilters {
+  const values = view?.state?.values;
+
+  const typeFilter =
+    (values?.[FEEDBACK_ADMIN_FILTER_TYPE_BLOCK_ID]?.[FEEDBACK_ADMIN_FILTER_TYPE_ACTION_ID]?.selected_option?.value ??
+      "all") as FeedbackTypeFilter;
+
+  const statusFilter =
+    (values?.[FEEDBACK_ADMIN_FILTER_STATUS_BLOCK_ID]?.[FEEDBACK_ADMIN_FILTER_STATUS_ACTION_ID]?.selected_option?.value ??
+      "all") as FeedbackStatusFilter;
+
+  return {
+    typeFilter: (typeFilter as any) ?? "all",
+    statusFilter: (statusFilter as any) ?? "all",
+  };
+}
+
+async function fetchFeedbackList(filters: FeedbackListFilters) {
+  const where: any = {};
+  if (filters.typeFilter && filters.typeFilter !== "all") where.type = filters.typeFilter;
+  if (filters.statusFilter && filters.statusFilter !== "all") where.status = filters.statusFilter;
+
+  return prisma.feedback.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }],
+    take: FEEDBACK_LIST_TAKE,
+    select: {
+      id: true,
+      type: true,
+      title: true,
+      description: true,
+      status: true,
+      createdBySlackId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+}
 /**
  * =========================================================
  * ✅ EMAIL SYNC (Slack -> DB)
@@ -360,6 +503,196 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
       if (payload.type === "block_actions") {
         const action = payload.actions?.[0];
         const actionId = action?.action_id as string | undefined;
+
+        // =========================================================
+        // ✅ FEEDBACK
+        // =========================================================
+        if (actionId === HOME_FEEDBACK_OPEN_ACTION_ID) {
+          if (!userSlackId) return reply.status(200).send();
+
+          await slack.views.open({
+            trigger_id: payload.trigger_id,
+            view: feedbackCreateModalView(),
+          });
+
+          return reply.status(200).send();
+        }
+
+        if (actionId === HOME_FEEDBACK_ADMIN_ACTION_ID) {
+          if (!userSlackId) return reply.status(200).send();
+
+          const filters: FeedbackListFilters = { typeFilter: "all", statusFilter: "all" };
+          const items = await fetchFeedbackList(filters);
+
+          await slack.views.open({
+            trigger_id: payload.trigger_id,
+            view: feedbackAdminModalView({
+              items,
+              typeFilter: filters.typeFilter,
+              statusFilter: filters.statusFilter,
+	              canEdit: isFeedbackAdmin(userSlackId),
+            }),
+          });
+
+          return reply.status(200).send();
+        }
+
+        // filtros dentro do modal de listagem (qualquer um pode usar)
+        if (actionId === FEEDBACK_ADMIN_FILTER_TYPE_ACTION_ID || actionId === FEEDBACK_ADMIN_FILTER_STATUS_ACTION_ID) {
+          // ACK rápido
+          reply.status(200).send();
+
+          void (async () => {
+            const view = payload.view;
+            if (!view?.id) return;
+
+            const filters = getFeedbackFiltersFromView(view);
+            const items = await fetchFeedbackList(filters);
+
+            await slack.views.update({
+              view_id: view.id,
+              hash: view.hash,
+              view: feedbackAdminModalView({
+                items,
+                typeFilter: filters.typeFilter,
+                statusFilter: filters.statusFilter,
+	                canEdit: isFeedbackAdmin(userSlackId),
+              }),
+            });
+          })().catch((e) => {
+            req.log.error({ e }, "[FEEDBACK] filter update failed");
+          });
+
+          return;
+        }
+
+        // status no modal (só admin pode alterar)
+        // - v1: botões
+        // - v2: overflow menu à direita
+        if (
+          actionId === FEEDBACK_SET_REJECTED_ACTION_ID ||
+          actionId === FEEDBACK_SET_WIP_ACTION_ID ||
+          actionId === FEEDBACK_SET_DONE_ACTION_ID ||
+          actionId === FEEDBACK_STATUS_MENU_ACTION_ID
+        ) {
+          // ACK rápido
+          reply.status(200).send();
+
+          void (async () => {
+            let feedbackId = "";
+            let nextStatus: "rejected" | "wip" | "done" | null = null;
+
+            // menu: value = "<id>|<status>"
+            if (actionId === FEEDBACK_STATUS_MENU_ACTION_ID) {
+              const raw = String(action?.selected_option?.value ?? "");
+              const [id, st] = raw.split("|");
+              feedbackId = String(id ?? "").trim();
+              if (st === "rejected" || st === "wip" || st === "done") nextStatus = st;
+            } else {
+              // botões: value = "<id>" e status vem do actionId
+              feedbackId = String(action?.value ?? "").trim();
+              nextStatus =
+                actionId === FEEDBACK_SET_REJECTED_ACTION_ID
+                  ? "rejected"
+                  : actionId === FEEDBACK_SET_WIP_ACTION_ID
+                    ? "wip"
+                    : "done";
+            }
+
+            if (!feedbackId || !nextStatus) return;
+
+            if (!isFeedbackAdmin(userSlackId)) {
+              await sendBotDm(slack, userSlackId!, "⛔ Você não tem permissão para alterar o status.");
+              return;
+            }
+
+            const existing = await prisma.feedback.findUnique({
+              where: { id: feedbackId },
+              select: {
+                id: true,
+                title: true,
+                type: true,
+                status: true,
+                createdBySlackId: true,
+              },
+            });
+
+            if (!existing) return;
+
+            // ✅ Regra: depois de concluído, não volta pra outros status
+            if (existing.status === "done") {
+              await sendBotDm(slack, userSlackId!, "✅ Este ticket já está *Concluído* e não pode ser alterado.");
+              return;
+            }
+
+            if (existing.status === nextStatus) return;
+
+            await prisma.feedback.update({
+              where: { id: feedbackId },
+              data: { status: nextStatus as any },
+            });
+
+            const typeLabel = existing.type === "bug" ? "Bug" : "Sugestão";
+
+            // ✅ Notifica o criador sobre mudança de status
+            const statusMsg =
+              nextStatus === "wip"
+                ? `🟡 Seu ${typeLabel} entrou em *WIP* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``
+                : nextStatus === "rejected"
+                  ? `🔴 Seu ${typeLabel} foi *Rejeitado* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``
+                  : `✅ Seu ${typeLabel} foi *Concluído* por <@${userSlackId}>.\n• *${existing.title}*\nUID: \`${existing.id}\``;
+
+            await sendBotDm(slack, existing.createdBySlackId, statusMsg);
+
+            // ✅ Ao concluir, abre uma thread em um chat com os envolvidos
+            if (nextStatus === "done") {
+              const opened = await openFeedbackDoneThread({
+                slack,
+                creatorSlackId: existing.createdBySlackId,
+                adminSlackId: userSlackId!,
+                feedbackId: existing.id,
+                title: existing.title,
+                typeLabel,
+              });
+
+              if (!opened) {
+                // fallback caso o bot não consiga abrir MPIM (escopos/limitações)
+                await sendBotDm(
+                  slack,
+                  userSlackId!,
+                  "⚠️ Não consegui abrir um chat em grupo automaticamente para detalhamento. Você pode falar com o criador do ticket manualmente."
+                );
+                await sendBotDm(
+                  slack,
+                  existing.createdBySlackId,
+                  `⚠️ Não consegui abrir um chat em grupo automaticamente para detalhamento. Se precisar, fale com <@${userSlackId}>.`
+                );
+              }
+            }
+
+            const view = payload.view;
+            if (!view?.id) return;
+
+            const filters = getFeedbackFiltersFromView(view);
+            const items = await fetchFeedbackList(filters);
+
+            await slack.views.update({
+              view_id: view.id,
+              hash: view.hash,
+              view: feedbackAdminModalView({
+                items,
+                typeFilter: filters.typeFilter,
+                statusFilter: filters.statusFilter,
+	              canEdit: isFeedbackAdmin(userSlackId),
+              }),
+            });
+          })().catch((e) => {
+            req.log.error({ e }, "[FEEDBACK] status update failed");
+          });
+
+          return;
+        }
+
 
         // ---- Topo (Home Header)
         if (actionId === HOME_CREATE_TASK_ACTION_ID) {
@@ -1327,6 +1660,71 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
       // =========================================================
       if (payload.type === "view_submission") {
         const cb = payload.view?.callback_id as string | undefined;
+
+        // -------------------------
+        // FEEDBACK CREATE (Bug/Sugestão) ✅
+        // - status nasce como "pending"
+        // -------------------------
+        if (cb === FEEDBACK_CREATE_CALLBACK_ID) {
+          if (!userSlackId) return reply.send({});
+
+          const values = payload.view.state.values;
+
+          const type = getSelectedOptionValue(values, FEEDBACK_TYPE_BLOCK_ID, FEEDBACK_TYPE_SELECT_ACTION_ID);
+          const title = (getInputValue(values, FEEDBACK_TITLE_BLOCK_ID, FEEDBACK_TITLE_INPUT_ACTION_ID) ?? "").trim();
+          const description = (getInputValue(values, FEEDBACK_DESC_BLOCK_ID, FEEDBACK_DESC_INPUT_ACTION_ID) ?? "").trim();
+
+          const errors: Record<string, string> = {};
+          if (!type) errors[FEEDBACK_TYPE_BLOCK_ID] = "Selecione o tipo.";
+          if (!title) errors[FEEDBACK_TITLE_BLOCK_ID] = "Informe o título.";
+          if (!description) errors[FEEDBACK_DESC_BLOCK_ID] = "Descreva o problema/sugestão.";
+
+          if (Object.keys(errors).length) {
+            return reply.send({ response_action: "errors", errors });
+          }
+
+          const created = await prisma.feedback.create({
+            data: {
+              type: type as any,
+              title,
+              description,
+              status: "pending",
+              createdBySlackId: userSlackId,
+            },
+            select: { id: true, type: true, title: true },
+          });
+
+          // ACK
+          reply.send({});
+
+          void (async () => {
+            const label = created.type === "bug" ? "Bug" : "Sugestão";
+
+            await sendBotDm(
+              slack,
+              userSlackId,
+              `✅ ${label} registrada como *Pendente*.\n• *${created.title}*\nUID: \`${created.id}\`\n\nAcompanhe em *Ver bugs/sugestões*.`
+            );
+
+            const admins = getFeedbackAdminIds();
+            if (admins.length) {
+              await Promise.allSettled(
+                admins.map((adminId) =>
+                  sendBotDm(
+                    slack,
+                    adminId,
+                    `🆕 Novo ${label} (Pendente) enviado por <@${userSlackId}>:\n• *${created.title}*\nUID: \`${created.id}\``
+                  )
+                )
+              );
+            }
+          })().catch((e) => {
+            req.log.error({ e }, "[FEEDBACK] create side-effects failed");
+          });
+
+          return;
+        }
+
 
         // -------------------------
         // CREATE TASK ✅ (notifica + publishHome)

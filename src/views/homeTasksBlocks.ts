@@ -65,7 +65,8 @@ export const DELEGATED_CANCEL_ACTION_ID = "delegated_cancel" as const;
 export const CC_SEND_QUESTION_ACTION_ID = "cc_send_question" as const;
 
 export const RECURRENCE_CANCEL_ACTION_ID = "recurrence_cancel" as const;
-
+export const HOME_FEEDBACK_OPEN_ACTION_ID = "home_feedback_open" as const;
+export const HOME_FEEDBACK_ADMIN_ACTION_ID = "home_feedback_admin" as const;
 export const PROJECT_VIEW_ACTION_ID = "project_view" as const;
 export const PROJECT_CREATE_TASK_ACTION_ID = "project_create_task" as const;
 export const PROJECT_EDIT_ACTION_ID = "project_edit" as const;
@@ -158,8 +159,8 @@ function myLine(t: HomeTaskItem) {
   const delegatedBy = t.delegationName
     ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
     : t.delegation
-    ? ` — delegado por ${atName(null, t.delegation)}`
-    : "";
+      ? ` — delegado por ${atName(null, t.delegation)}`
+      : "";
 
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText}${delegatedBy}`;
 }
@@ -239,6 +240,7 @@ export function homeTasksBlocks(args: {
 
   // projetos
   projects: ProjectItem[];
+  showFeedbackAdminButton?: boolean;
 }): KnownBlock[] {
   const blocks: KnownBlock[] = [];
 
@@ -362,6 +364,39 @@ export function homeTasksBlocks(args: {
   } else {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } } as KnownBlock);
   }
+
+  pushDivider();
+
+  // =========================
+  // BUGS / SUGESTÕES
+  // =========================
+  pushHeader("💡 Bugs e sugestões");
+
+  const feedbackButtons: any[] = [
+    {
+      type: "button",
+      text: { type: "plain_text", text: "🐞 Enviar bug/sugestão" },
+      action_id: HOME_FEEDBACK_OPEN_ACTION_ID,
+      value: "open_feedback",
+    },
+  ];
+
+  if (args.showFeedbackAdminButton) {
+    feedbackButtons.push({
+      type: "button",
+      text: { type: "plain_text", text: "📋 Ver bugs/sugestões" },
+      action_id: HOME_FEEDBACK_ADMIN_ACTION_ID,
+      value: "admin_feedback",
+    });
+  }
+
+  blocks.push({
+    type: "actions",
+    block_id: "feedback_actions",
+    elements: feedbackButtons as any,
+  } as KnownBlock);
+
+  pushDivider();
 
   // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
   const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
