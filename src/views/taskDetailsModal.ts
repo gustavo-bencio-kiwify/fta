@@ -29,6 +29,9 @@ export function taskDetailsModalView(args: {
   recurrence: string | null;
   projectNameOrId: string | null;
   description: string | null;
+
+  // ✅ NOVO (opcional): lista de cópias
+  carbonCopiesSlackIds?: string[] | null;
 }): View {
   const dueBr = formatDateBRFromIso(args.dueDateIso);
   const dueText = dueBr
@@ -41,10 +44,13 @@ export function taskDetailsModalView(args: {
   const projectText = args.projectNameOrId ?? "—";
   const recurrenceText = args.recurrence ?? "—";
 
+  const ccIds = Array.from(new Set((args.carbonCopiesSlackIds ?? []).filter(Boolean)));
+  const hasCc = ccIds.length > 0;
+
   const blocks: View["blocks"] = [
     { type: "section", text: { type: "mrkdwn", text: `📌 *${args.title}*` } },
 
-    // ✅ NOVO: UID/ID da task (fácil de copiar)
+    // ✅ UID/ID da task (fácil de copiar)
     { type: "context", elements: [{ type: "mrkdwn", text: `🆔 *UID:* \`${args.taskId}\`` }] },
 
     {
@@ -59,6 +65,23 @@ export function taskDetailsModalView(args: {
       ],
     },
   ];
+
+  // ✅ NOVO: bloco de cópias (se existir)
+  if (hasCc) {
+    blocks.push({ type: "divider" });
+
+    // Slack section text tem limite; por segurança, limita visualmente
+    const ccLines = ccIds.slice(0, 20).map((id) => `• <@${id}>`);
+    const extra = ccIds.length > 20 ? `\n… +${ccIds.length - 20} cópia(s)` : "";
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `👥 *Cópias (${ccIds.length}):*\n${ccLines.join("\n")}${extra}`,
+      },
+    });
+  }
 
   if (args.description?.trim()) {
     blocks.push({ type: "divider" });

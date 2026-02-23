@@ -1300,7 +1300,22 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         if (actionId === TASKS_RESCHEDULE_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
 
-          const selectedIds = getSelectedTaskIdsFromHome(payload);
+          // ✅ Debug (deixa temporariamente)
+          req.log.info(
+            {
+              actionId,
+              actionValue: action?.value,
+              containerType: payload?.container?.type,
+              channelId: payload?.container?.channel_id ?? payload?.channel?.id,
+            },
+            "[RESCHEDULE] incoming action"
+          );
+
+          // ✅ Se veio de botão (mensagem/DM/thread), usa o value diretamente
+          const buttonTaskId = String(action?.value ?? "").trim();
+
+          // ✅ Se não veio value, tenta seleção da Home
+          const selectedIds = buttonTaskId ? [buttonTaskId] : getSelectedTaskIdsFromHome(payload);
 
           if (selectedIds.length !== 1) {
             await sendBotDm(slack, userSlackId, "⚠️ Selecione apenas *1* tarefa por vez para reprogramar.");
@@ -1514,6 +1529,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               projectId: true,
               responsible: true,
               delegation: true,
+              carbonCopies: { select: { slackUserId: true } }
             },
           });
 
@@ -1546,6 +1562,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               recurrence: (task.recurrence as any) ?? null,
               projectNameOrId,
               description: task.description ?? null,
+              carbonCopiesSlackIds: task.carbonCopies.map((c) => c.slackUserId),
             }),
           });
 
