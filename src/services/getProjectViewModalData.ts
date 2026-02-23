@@ -29,17 +29,15 @@ export async function getProjectViewModalData(args: {
       id: projectId,
       status: "active",
       OR: [
-        // ✅ criador sempre pode abrir
         { createdBySlackId: slackUserId },
-
-        // ✅ ou qualquer envolvido em alguma task do projeto
+        { members: { some: { slackUserId: slackUserId } } },
         {
           tasks: {
             some: {
               OR: [
                 { delegation: slackUserId },
                 { responsible: slackUserId },
-                { carbonCopies: { some: { slackUserId } } },
+                { carbonCopies: { some: { slackUserId: slackUserId } } },
               ],
             },
           },

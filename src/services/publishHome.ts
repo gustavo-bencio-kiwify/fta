@@ -179,7 +179,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
       term: t.term,
       urgency: t.urgency,
     }));
@@ -192,7 +192,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
       term: t.term,
       urgency: t.urgency,
     }));
@@ -205,7 +205,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
       term: t.term,
       urgency: t.urgency,
     }));
@@ -218,7 +218,7 @@ export async function publishHome(slack: WebClient, userId: string) {
       title: t.title,
       description: t.description,
       delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null, // ✅
+      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
       term: t.term,
       urgency: t.urgency,
     }));
@@ -233,7 +233,6 @@ export async function publishHome(slack: WebClient, userId: string) {
       AND: [visibleWhere],
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    // ✅ agora puxa description também
     select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true },
     take: 60,
   })) as unknown as Array<{
@@ -245,7 +244,6 @@ export async function publishHome(slack: WebClient, userId: string) {
     responsible: string;
   }>;
 
-  // ✅ resolve nomes do responsável
   const delegatedResponsibleNameMap = await resolveSlackNames(
     slack,
     delegated.map((t) => t.responsible)
@@ -273,7 +271,6 @@ export async function publishHome(slack: WebClient, userId: string) {
       AND: [visibleWhere],
     },
     orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    // ✅ agora puxa description também
     select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true, delegation: true },
     take: 60,
   })) as unknown as Array<{
@@ -286,7 +283,6 @@ export async function publishHome(slack: WebClient, userId: string) {
     delegation: string;
   }>;
 
-  // ✅ resolve nomes de responsible + delegation
   const ccNameMap = await resolveSlackNames(
     slack,
     ccTasks.flatMap((t) => [t.responsible, t.delegation])
@@ -314,7 +310,10 @@ export async function publishHome(slack: WebClient, userId: string) {
   })) as unknown as Array<{ id: string; title: string; recurrence: string }>;
 
   // =========================================================
-  // 6) Projetos (do usuário)
+  // 6) Projetos (visibilidade)
+  // - criador vê
+  // - membro com acesso vê
+  // - envolvido em task do projeto vê
   // =========================================================
   const projects = await prisma.project.findMany({
     where: {
@@ -323,7 +322,10 @@ export async function publishHome(slack: WebClient, userId: string) {
         // ✅ criador sempre enxerga
         { createdBySlackId: userSlackId },
 
-        // ✅ só entra se tiver alguma task no projeto envolvendo a pessoa
+        // ✅ membros com acesso (visualização)
+        { members: { some: { slackUserId: userSlackId } } },
+
+        // ✅ envolvidos em tasks do projeto
         {
           tasks: {
             some: {
@@ -386,63 +388,63 @@ export async function publishHome(slack: WebClient, userId: string) {
       delegatedToday: delegatedToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
       delegatedTomorrow: delegatedTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
       delegatedFuture: delegatedFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: delegatedResponsibleNameMap.get(t.responsible) ?? null,
       })),
 
       ccToday: ccToday.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
       ccTomorrow: ccTomorrow.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
       ccFuture: ccFuture.map((t) => ({
         id: t.id,
         title: t.title,
-        description: t.description, // ✅
+        description: t.description,
         term: t.term,
         urgency: t.urgency,
         responsible: t.responsible,
-        responsibleName: ccNameMap.get(t.responsible) ?? null, // ✅
+        responsibleName: ccNameMap.get(t.responsible) ?? null,
         delegation: t.delegation,
-        delegationName: ccNameMap.get(t.delegation) ?? null, // ✅
+        delegationName: ccNameMap.get(t.delegation) ?? null,
       })),
 
       recurrences: recurrenceTasks.map((r) => ({ id: r.id, title: r.title, recurrence: r.recurrence })),
@@ -455,7 +457,11 @@ export async function publishHome(slack: WebClient, userId: string) {
         status: f.status as any,
         updatedAt: f.updatedAt,
       })),
-    })
+
+      // ✅ se seu homeTasksBlocks ainda usar essa flag para mostrar o botão "Ver bugs/sugestões",
+      // deixe true para aparecer para todos
+      showFeedbackAdminButton: true,
+    } as any)
   );
 
   await slack.views.publish({

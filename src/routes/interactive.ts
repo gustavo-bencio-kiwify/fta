@@ -771,7 +771,10 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                     // ✅ criador sempre vê
                     { createdBySlackId: userSlackId },
 
-                    // ✅ só vê se já existe alguma task do projeto envolvendo a pessoa
+                    // ✅ membros com acesso também veem
+                    { members: { some: { slackUserId: userSlackId } } },
+
+                    // ✅ envolvidos em tasks do projeto também veem
                     {
                       tasks: {
                         some: {
@@ -1239,6 +1242,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         }
 
         // ---- ✅ Concluir Projeto (SÓ O CRIADOR)
+        // ---- ✅ Concluir Projeto (SOMENTE O CRIADOR)
         if (actionId === PROJECT_CONCLUDE_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
 
@@ -1261,12 +1265,8 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             return reply.status(200).send();
           }
 
-          const isMember = project.members.some((m) => m.slackUserId === userSlackId);
-          if (!isMember) {
-            await sendBotDm(slack, userSlackId, "⛔ Você não é membro deste projeto.");
-            return reply.status(200).send();
-          }
-
+          // ✅ Criador pode concluir SEM precisar estar em members
+          // fallback só para projetos legados sem createdBySlackId
           const fallbackCreator = project.members[0]?.slackUserId ?? null;
           const creatorId = project.createdBySlackId ?? fallbackCreator;
 
@@ -1288,7 +1288,9 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           });
 
           await Promise.allSettled(
-            Array.from(new Set([userSlackId, ...members.map((m) => m.slackUserId)])).map((uid) => publishHome(slack, uid))
+            Array.from(new Set([userSlackId, ...members.map((m) => m.slackUserId)])).map((uid) =>
+              publishHome(slack, uid)
+            )
           );
 
           return reply.status(200).send();
@@ -1677,6 +1679,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               status: "active",
               OR: [
                 { createdBySlackId: userSlackId },
+                { members: { some: { slackUserId: userSlackId } } },
                 {
                   tasks: {
                     some: {
@@ -1764,12 +1767,12 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           reply.send({});
 
           void (async () => {
-            const label = created.type === "bug" ? "Bug" : "Sugestão";
+            const label = created.type === "bug" ? " 🐞 Bug" : "💡 Sugestão";
 
             await sendBotDm(
               slack,
               userSlackId,
-              `✅ ${label} registrada como *Pendente*.\n• *${created.title}*\nUID: \`${created.id}\`\n\nAcompanhe em *Ver bugs/sugestões*.`
+              `✅ ${label} registrado(a).\n• *Título*: *${created.title}*\n Acompanhe em *📋 Ver bugs/sugestões*.`
             );
 
             const admins = getFeedbackAdminIds();
@@ -1779,7 +1782,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
                   sendBotDm(
                     slack,
                     adminId,
-                    `🆕 Novo ${label} (Pendente) enviado por <@${userSlackId}>:\n• *${created.title}*\nUID: \`${created.id}\``
+                    `🆕 Novo(a) ${label} enviado por <@${userSlackId}>:\n• *${created.title}*\nUID: \`${created.id}\``
                   )
                 )
               );

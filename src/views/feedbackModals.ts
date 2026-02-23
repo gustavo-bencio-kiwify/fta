@@ -49,7 +49,7 @@ export type FeedbackItem = {
 };
 
 function labelType(t: FeedbackItem["type"]) {
-  return t === "bug" ? "Bug" : "Sugestão";
+  return t === "bug" ? "🐞 Bug" : "💡 Sugestão";
 }
 
 function labelStatus(s: FeedbackItem["status"]) {

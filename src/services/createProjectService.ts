@@ -10,33 +10,55 @@ export async function createProjectService(
     endDate?: Date | null;
 
     /**
-     * ⚠️ Mantido só por compatibilidade com chamadas antigas,
-     * mas NÃO usamos mais no create (regra do produto):
-     * - ninguém entra no projeto "na mão" no momento da criação
-     * - só entra quando uma task do projeto envolver a pessoa
+     * ✅ Agora usamos no create:
+     * - serve apenas para VISUALIZAÇÃO do projeto
+     * - NÃO dá permissão de concluir (isso continua sendo só do criador)
      */
     memberSlackIds?: string[];
 
     createdBySlackId: string;
   }
 ) {
-  // 1) cria o projeto
-  const project = await prisma.project.create({
-    data: {
-      name: args.name.trim(),
-      description: args.description?.trim() ? args.description.trim() : null,
-      endDate: args.endDate ?? null,
+  const name = args.name.trim();
+  const description = args.description?.trim() ? args.description.trim() : null;
 
-      // ✅ criador
-      createdBySlackId: args.createdBySlackId,
-    },
-    select: { id: true, name: true },
+  // ✅ membros com acesso (sem duplicados, sem vazio, sem incluir criador)
+  const memberSlackIds = Array.from(
+    new Set(
+      (args.memberSlackIds ?? [])
+        .map((id) => String(id ?? "").trim())
+        .filter(Boolean)
+        .filter((id) => id !== args.createdBySlackId)
+    )
+  );
+
+  // 1) cria projeto + membros de acesso (visualização)
+  const project = await prisma.$transaction(async (tx) => {
+    const created = await tx.project.create({
+      data: {
+        name,
+        description,
+        endDate: args.endDate ?? null,
+        // ✅ criador
+        createdBySlackId: args.createdBySlackId,
+      },
+      select: { id: true, name: true },
+    });
+
+    if (memberSlackIds.length) {
+      await tx.projectMember.createMany({
+        data: memberSlackIds.map((slackUserId) => ({
+          projectId: created.id,
+          slackUserId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    return created;
   });
 
-  // 2) ✅ garante que o CRIADOR aparece na lista de projetos
-  // (mesmo que nenhuma task esteja vinculada ao projeto ainda)
-
-  // 3) ✅ DM apenas para quem criou (não notifica "membros" agora)
+  // 2) ✅ DM apenas para quem criou (mantido)
   const text = `📁 *Projeto criado:* *${project.name}*`;
 
   try {
