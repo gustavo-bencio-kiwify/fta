@@ -622,6 +622,56 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
               data: { status: nextStatus as any },
             });
 
+            // ✅ Labels pra mensagens
+            const typeLabel = existing.type === "bug" ? "🐞 Bug" : "💡 Sugestão";
+
+            // ✅ 1) Quando vai pra WIP: notifica o criador por DM
+            if (existing.status !== "wip" && nextStatus === "wip") {
+              await sendBotDm(
+                slack,
+                existing.createdBySlackId,
+                `🟡 Seu ticket entrou em *WIP* por <@${userSlackId}>.\n*${existing.title}*\nID: \`${existing.id}\``
+              );
+            }
+
+            // ✅ 2) Quando vai pra REJEITADO: abre DM em grupo (criador + admin) e cria thread
+            if (existing.status !== "rejected" && nextStatus === "rejected") {
+              try {
+                const users = Array.from(new Set([existing.createdBySlackId, userSlackId!])).join(",");
+                const conv = await slack.conversations.open({ users });
+                const channelId = (conv as any)?.channel?.id as string | undefined;
+
+                if (channelId) {
+                  const parent = await slack.chat.postMessage({
+                    channel: channelId,
+                    text:
+                      `🔴 Ticket rejeitado por <@${userSlackId}>\n` +
+                      `*${existing.title}*\n` +
+                      `${typeLabel} • ID: \`${existing.id}\``,
+                  });
+
+                  const threadTs = (parent as any)?.ts as string | undefined;
+                  if (threadTs) {
+                    await slack.chat.postMessage({
+                      channel: channelId,
+                      thread_ts: threadTs,
+                      text: `👀 <@${existing.createdBySlackId}>, alinhem aqui se necessário.`,
+                    });
+
+                    if ((existing.description ?? "").trim()) {
+                      await slack.chat.postMessage({
+                        channel: channelId,
+                        thread_ts: threadTs,
+                        text: `📝 *Descrição original:*\n${existing.description}`,
+                      });
+                    }
+                  }
+                }
+              } catch (e) {
+                req.log.error({ e }, "[FEEDBACK] failed to open rejected thread");
+              }
+            }
+
             // ✅ Ao concluir: abre DM em grupo (criador + admin) e cria uma thread
             if (existing.status !== "done" && nextStatus === "done") {
               try {
