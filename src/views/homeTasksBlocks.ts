@@ -328,15 +328,15 @@ export function homeTasksBlocks(args: {
     type: "actions",
     block_id: "my_tasks_actions",
     elements: [
+      { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
+      { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
+      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
       {
         type: "button",
         text: { type: "plain_text", text: "✅ Concluir selecionadas" },
         action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
         value: "conclude_selected",
       },
-      { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
-      { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
-      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
     ],
   } as KnownBlock);
   pushDivider();
@@ -356,9 +356,9 @@ export function homeTasksBlocks(args: {
     block_id: "delegated_actions",
     elements: [
       { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
-      { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
-      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
       { type: "button", text: { type: "plain_text", text: "✏️ Editar" }, action_id: DELEGATED_EDIT_ACTION_ID, value: "edit" },
+      { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
+      { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
       { type: "button", text: { type: "plain_text", text: "❌ Cancelar" }, action_id: DELEGATED_CANCEL_ACTION_ID, value: "cancel" },
     ],
   } as KnownBlock);

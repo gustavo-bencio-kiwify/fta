@@ -142,7 +142,7 @@ import { notifyTaskCompleted, TASK_REOPEN_ACTION_ID } from "../services/notifyTa
 import { syncCalendarEventForTask, deleteCalendarEventForTask } from "../services/googleCalendar";
 
 import { publishHome } from "../services/publishHome";
-import { openQuestionThread } from "../services/openQuestionThread";
+import { openQuestionThread } from "../services/openThread";
 import { createProjectService } from "../services/createProjectService";
 import { rescheduleTaskService } from "../services/rescheduleTaskService";
 import { notifyTaskRescheduledGroup } from "../services/notifyTaskRescheduledGroup";
