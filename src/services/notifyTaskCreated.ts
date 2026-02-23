@@ -1,7 +1,7 @@
 // src/services/notifyTaskCreated.ts
 import type { WebClient, KnownBlock } from "@slack/web-api";
 import { prisma } from "../lib/prisma";
-import { TASKS_SEND_QUESTION_ACTION_ID } from "../views/homeTasksBlocks";
+import { TASKS_RESCHEDULE_ACTION_ID, TASKS_SEND_QUESTION_ACTION_ID } from "../views/homeTasksBlocks";
 
 // action_id do botão "Concluir"
 export const TASK_DETAILS_CONCLUDE_ACTION_ID = "task_details_conclude" as const;
@@ -132,20 +132,26 @@ export async function notifyTaskCreated(args: NotifyTaskCreatedArgs) {
       {
         type: "actions",
         elements: [
-          {
-            type: "button",
-            style: "primary",
-            text: { type: "plain_text", text: "✅ Concluir" },
-            action_id: TASK_DETAILS_CONCLUDE_ACTION_ID,
-            value: taskId,
-          },
-          {
-            type: "button",
-            text: { type: "plain_text", text: ":thread: Abrir thread" },
-            action_id: TASKS_SEND_QUESTION_ACTION_ID,
-            value: taskId,
-          },
-        ],
+                {
+                  type: "button",
+                  style: "primary",
+                  text: { type: "plain_text", text: "✅ Concluir" },
+                  action_id: TASK_DETAILS_CONCLUDE_ACTION_ID,
+                  value: taskId,
+                },
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "📅 Reprogramar Prazo" },
+                  action_id: TASKS_RESCHEDULE_ACTION_ID,
+                  value: taskId,
+                },
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: ":thread: Abrir thread" },
+                  action_id: TASKS_SEND_QUESTION_ACTION_ID,
+                  value: taskId,
+                },
+              ],
       },
 
       {
