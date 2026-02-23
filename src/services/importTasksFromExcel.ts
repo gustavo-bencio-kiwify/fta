@@ -32,9 +32,9 @@ function normalizeHeader(s: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "") // remove acentos
-    .replace(/\*/g, "")             // remove "*"
-    .replace(/[^a-z0-9]+/g, "_")    // tudo que não é letra/número vira "_"
-    .replace(/^_+|_+$/g, "");       // trim underscores
+    .replace(/\*/g, "")              // remove "*"
+    .replace(/[^a-z0-9]+/g, "_")     // tudo que não é letra/número vira "_"
+    .replace(/^_+|_+$/g, "");        // trim underscores
 }
 
 function cellToString(v: any): string {
@@ -225,6 +225,10 @@ export async function importTasksFromExcelSlackFile(args: {
     description?: number;
     responsibleEmail?: number;
     responsibleSlackId?: number;
+
+    // ✅ NOVO: delegador por linha (fallback = uploadedBySlackId)
+    delegationSlackId?: number;
+
     term?: number;
     deadlineTime?: number;
     urgency?: number;
@@ -245,11 +249,26 @@ export async function importTasksFromExcelSlackFile(args: {
     if (["titulo", "title"].includes(h)) cols.title = colNumber;
     if (["descricao", "description"].includes(h)) cols.description = colNumber;
 
-    if (["e_mail_do_responsavel", "email_do_responsavel", "responsible_email"].includes(h))
+    if (["e_mail_do_responsavel", "email_do_responsavel", "responsible_email"].includes(h)) {
       cols.responsibleEmail = colNumber;
+    }
 
-    if (["id_slack_do_responsavel", "responsible_slack_id", "responsavel_slack_id"].includes(h))
+    if (["id_slack_do_responsavel", "responsible_slack_id", "responsavel_slack_id"].includes(h)) {
       cols.responsibleSlackId = colNumber;
+    }
+
+    // ✅ NOVO: "ID Slack de quem delegou"
+    if (
+      [
+        "id_slack_de_quem_delegou",
+        "id_slack_do_delegador",
+        "id_slack_delegador",
+        "delegation_slack_id",
+        "delegator_slack_id",
+      ].includes(h)
+    ) {
+      cols.delegationSlackId = colNumber;
+    }
 
     if (["prazo", "due_date", "due"].includes(h)) cols.term = colNumber;
     if (["horario", "hora", "due_time", "time"].includes(h)) cols.deadlineTime = colNumber;
@@ -278,7 +297,7 @@ export async function importTasksFromExcelSlackFile(args: {
         "• *Prazo**\n" +
         "• *Urgência**\n\n" +
         "E opcionalmente:\n" +
-        "Descrição, ID Slack do responsável, Horário, Recorrência, Nome do Projeto, ID Projeto, E-mail das cópias, ID Slack das cópias.",
+        "Descrição, ID Slack do responsável, ID Slack de quem delegou, Horário, Recorrência, Nome do Projeto, ID Projeto, E-mail das cópias, ID Slack das cópias.",
     });
     return;
   }
@@ -318,6 +337,27 @@ export async function importTasksFromExcelSlackFile(args: {
       continue;
     }
 
+    // ✅ NOVO: delegador por linha (fallback = quem enviou o arquivo)
+    let delegationSlackId = uploadedBySlackId;
+
+    if (cols.delegationSlackId) {
+      const delegationRaw = cellToString(row.getCell(cols.delegationSlackId).value);
+
+      if (delegationRaw) {
+        const parsedDelegation = parseSlackUserId(delegationRaw);
+
+        if (!parsedDelegation) {
+          failed.push({
+            row: r,
+            reason: `ID Slack de quem delegou inválido: "${delegationRaw}"`,
+          });
+          continue;
+        }
+
+        delegationSlackId = parsedDelegation;
+      }
+    }
+
     const description = cols.description
       ? (cellToString(row.getCell(cols.description).value) || null)
       : null;
@@ -345,14 +385,24 @@ export async function importTasksFromExcelSlackFile(args: {
     ).filter((id) => id !== responsibleSlackId);
 
     // Projeto: por ID (uuid) ou Nome (exato)
+    // ✅ Agora valida acesso considerando uploader OU delegador da linha
     let projectId: string | null = null;
 
     const projectIdRaw = cols.projectId ? cellToString(row.getCell(cols.projectId).value) : "";
     const projectNameRaw = cols.projectName ? cellToString(row.getCell(cols.projectName).value) : "";
 
+    const projectAccessUserIds = Array.from(new Set([uploadedBySlackId, delegationSlackId].filter(Boolean)));
+
     if (projectIdRaw && isUuid(projectIdRaw)) {
       const ok = await prisma.project.findFirst({
-        where: { id: projectIdRaw, status: "active", members: { some: { slackUserId: uploadedBySlackId } } },
+        where: {
+          id: projectIdRaw,
+          status: "active",
+          OR: [
+            { createdBySlackId: { in: projectAccessUserIds } },
+            { members: { some: { slackUserId: { in: projectAccessUserIds } } } },
+          ],
+        },
         select: { id: true },
       });
       projectId = ok?.id ?? null;
@@ -361,7 +411,10 @@ export async function importTasksFromExcelSlackFile(args: {
         where: {
           status: "active",
           name: { equals: projectNameRaw, mode: "insensitive" as any },
-          members: { some: { slackUserId: uploadedBySlackId } },
+          OR: [
+            { createdBySlackId: { in: projectAccessUserIds } },
+            { members: { some: { slackUserId: { in: projectAccessUserIds } } } },
+          ],
         },
         select: { id: true },
       });
@@ -372,7 +425,7 @@ export async function importTasksFromExcelSlackFile(args: {
       const task = await createTaskService({
         title,
         description: description?.trim() ? description : undefined,
-        delegation: uploadedBySlackId,
+        delegation: delegationSlackId, // ✅ usa delegador da linha (ou fallback)
         responsible: responsibleSlackId,
         term,
         deadlineTime,
@@ -388,7 +441,7 @@ export async function importTasksFromExcelSlackFile(args: {
         await syncTaskParticipantEmails({
           slack,
           taskId: task.id,
-          delegationSlackId: uploadedBySlackId,
+          delegationSlackId, // ✅ usa delegador da linha
           responsibleSlackId: task.responsible,
           carbonCopiesSlackIds: task.carbonCopies.map((c) => c.slackUserId),
         });
@@ -401,7 +454,7 @@ export async function importTasksFromExcelSlackFile(args: {
       await notifyTaskCreated({
         slack,
         taskId: task.id,
-        createdBy: uploadedBySlackId,
+        createdBy: delegationSlackId, // ✅ notificação mostra o delegador correto
         taskTitle: task.title,
         responsible: task.responsible,
         carbonCopies: task.carbonCopies.map((c) => c.slackUserId),
