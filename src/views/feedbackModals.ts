@@ -49,7 +49,7 @@ export type FeedbackItem = {
 };
 
 function labelType(t: FeedbackItem["type"]) {
-  return t === "bug" ? "🐞 Bug" : "💡 Sugestão";
+  return t === "bug" ? "Bug" : "Sugestão";
 }
 
 function labelStatus(s: FeedbackItem["status"]) {
@@ -139,8 +139,8 @@ export function feedbackCreateModalView(): ModalView {
           type: "static_select",
           action_id: FEEDBACK_TYPE_SELECT_ACTION_ID,
           options: [
-            { text: { type: "plain_text", text: "Bug" }, value: "bug" },
-            { text: { type: "plain_text", text: "Sugestão" }, value: "suggestion" },
+            { text: { type: "plain_text", text: "🐞 Bug" }, value: "bug" },
+            { text: { type: "plain_text", text: "💡 Sugestão" }, value: "suggestion" },
           ],
         },
       },

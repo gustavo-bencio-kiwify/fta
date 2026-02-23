@@ -623,7 +623,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
             });
 
             // ✅ Labels pra mensagens
-            const typeLabel = existing.type === "bug" ? "🐞 Bug" : "💡 Sugestão";
+            const typeLabel = existing.type === "bug" ? "Bug" : "Sugestão";
 
             // ✅ 1) Quando vai pra WIP: notifica o criador por DM
             if (existing.status !== "wip" && nextStatus === "wip") {
