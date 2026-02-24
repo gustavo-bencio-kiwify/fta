@@ -1,7 +1,7 @@
 // src/services/updateTaskOpenMessage.ts
 import type { WebClient, KnownBlock } from "@slack/web-api";
 import { prisma } from "../lib/prisma";
-import { TASKS_SEND_QUESTION_ACTION_ID } from "../views/homeTasksBlocks";
+import { TASKS_RESCHEDULE_ACTION_ID, TASKS_SEND_QUESTION_ACTION_ID } from "../views/homeTasksBlocks";
 import { TASK_DETAILS_CONCLUDE_ACTION_ID } from "./notifyTaskCreated";
 
 const SAO_PAULO_TZ = "America/Sao_Paulo";
@@ -86,13 +86,19 @@ export async function updateTaskOpenMessage(slack: WebClient, taskId: string) {
           style: "primary",
           text: { type: "plain_text", text: "✅ Concluir" },
           action_id: TASK_DETAILS_CONCLUDE_ACTION_ID,
-          value: taskId,
+          value: task.id, // ou taskId
         },
         {
           type: "button",
-          text: { type: "plain_text", text: ":thread: Abrir thread" },
+          text: { type: "plain_text", text: "📅 Reprogramar Prazo" },
+          action_id: TASKS_RESCHEDULE_ACTION_ID,
+          value: task.id, // ou taskId
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "⏳ Abrir thread" },
           action_id: TASKS_SEND_QUESTION_ACTION_ID,
-          value: taskId,
+          value: task.id, // ou taskId
         },
       ],
     },
