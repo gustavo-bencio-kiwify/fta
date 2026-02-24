@@ -136,22 +136,10 @@ function feedbackStatusLabel(s: FeedbackHomeItem["status"]) {
  * - Linha 1: o "line" principal
  * - Linha 2: descrição (se existir)
  */
-function buildCheckboxText(line: string, description?: string | null) {
-  const lineClean = (line ?? "").trim().replace(/\s+/g, " ");
-  const descClean = (description ?? "").trim().replace(/\s+/g, " ");
-
-  // limites "seguros"
-  const LINE_MAX = 160;
-  const TOTAL_MAX = 260;
-
-  const lineTrunc = lineClean.slice(0, LINE_MAX);
-  if (!descClean) return lineTrunc;
-
-  const remaining = Math.max(0, TOTAL_MAX - (lineTrunc.length + 1));
-  const descTrunc = descClean.slice(0, remaining);
-
-  // coloca como 2ª linha
-  return descTrunc ? `${lineTrunc}\n${descTrunc}` : lineTrunc;
+function buildCheckboxText(line: string, _description?: string | null) {
+  const clean = (line ?? "").trim().replace(/\s+/g, " ");
+  const MAX = 75; // limite seguro para option.text
+  return clean.length <= MAX ? clean : clean.slice(0, MAX - 1) + "…";
 }
 
 /**

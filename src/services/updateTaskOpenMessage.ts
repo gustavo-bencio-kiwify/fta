@@ -96,7 +96,7 @@ export async function updateTaskOpenMessage(slack: WebClient, taskId: string) {
         },
         {
           type: "button",
-          text: { type: "plain_text", text: "⏳ Abrir thread" },
+          text: { type: "plain_text", text: ":thread: Abrir thread" },
           action_id: TASKS_SEND_QUESTION_ACTION_ID,
           value: task.id, // ou taskId
         },

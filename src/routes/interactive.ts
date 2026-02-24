@@ -220,21 +220,110 @@ function parseProjectModalState(view: any): { projectId: string; page: number; f
   }
 }
 
+function extractUuid(raw: string | null | undefined): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  // UUID puro
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
+    return s;
+  }
+
+  // tenta encontrar UUID dentro de strings tipo "task:<uuid>" ou "bucket|<uuid>"
+  const m = s.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m?.[0] ?? null;
+}
+
+function getTaskIdFromActionValue(action: any): string | null {
+  const raw = String(action?.value ?? "").trim();
+  if (!raw) return null;
+
+  // UUID puro ou UUID embutido em string (ex.: "task:<uuid>")
+  const direct = extractUuid(raw);
+  if (direct) return direct;
+
+  // fallback: JSON string (se algum botão mandar {"taskId":"..."})
+  try {
+    const parsed = JSON.parse(raw);
+    return extractUuid(parsed?.taskId);
+  } catch {
+    return null;
+  }
+}
+
+async function getTaskIdFromMainMessageContext(payload: any) {
+  const channelId =
+    String(payload?.container?.channel_id ?? payload?.channel?.id ?? "").trim() || null;
+
+  // ✅ no clique do botão da mensagem principal, este é o ts da própria mensagem
+  const messageTs =
+    String(payload?.container?.message_ts ?? payload?.message?.ts ?? "").trim() || null;
+
+  if (!channelId || !messageTs) return null;
+
+  const task = await prisma.task.findFirst({
+    where: {
+      slackOpenChannelId: channelId,
+      slackOpenMessageTs: messageTs,
+    },
+    select: { id: true },
+  });
+
+  return task?.id ?? null;
+}
+
+function getTaskIdFromMessageBlocks(payload: any): string | null {
+  const blocks = payload?.message?.blocks ?? [];
+  for (const b of blocks) {
+    const candidates: string[] = [];
+
+    if (typeof b?.text?.text === "string") candidates.push(b.text.text);
+
+    if (Array.isArray(b?.fields)) {
+      for (const f of b.fields) {
+        if (typeof f?.text === "string") candidates.push(f.text);
+      }
+    }
+
+    if (Array.isArray(b?.elements)) {
+      for (const e of b.elements) {
+        if (typeof e?.text === "string") candidates.push(e.text);
+      }
+    }
+
+    for (const txt of candidates) {
+      // seu extractUuid já resolve bem
+      const id = extractUuid(txt);
+      if (id) return id;
+    }
+  }
+
+  return null;
+}
+
 function getSelectedTaskIdsFromHome(payload: any): string[] {
   const stateValues = payload?.view?.state?.values;
   if (!stateValues) return [];
 
   const ids: string[] = [];
-  for (const block of Object.values(stateValues)) {
-    const action = (block as any)?.[TASK_SELECT_ACTION_ID];
+
+  for (const block of Object.values(stateValues) as any[]) {
+    const action = block?.[TASK_SELECT_ACTION_ID];
     const selected = action?.selected_options as Array<{ value: string }> | undefined;
-    if (selected?.length) for (const opt of selected) ids.push(opt.value);
+
+    if (!selected?.length) continue;
+
+    for (const opt of selected) {
+      const id = extractUuid(opt?.value);
+      if (id) ids.push(id);
+    }
   }
+
   return Array.from(new Set(ids));
 }
 
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v ?? "").trim());
 }
 
 function formatDateBRFromIso(iso: string) {
@@ -1300,22 +1389,42 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
         if (actionId === TASKS_RESCHEDULE_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
 
-          // ✅ Debug (deixa temporariamente)
           req.log.info(
             {
               actionId,
               actionValue: action?.value,
               containerType: payload?.container?.type,
               channelId: payload?.container?.channel_id ?? payload?.channel?.id,
+              messageTs: payload?.container?.message_ts ?? payload?.message?.ts,
             },
             "[RESCHEDULE] incoming action"
           );
 
-          // ✅ Se veio de botão (mensagem/DM/thread), usa o value diretamente
-          const buttonTaskId = String(action?.value ?? "").trim();
+          // ✅ resolve por múltiplas fontes (sem depender só do value)
+          const buttonTaskId = getTaskIdFromActionValue(action);
+          const taskIdFromMessage = await getTaskIdFromMainMessageContext(payload);
+          const taskIdFromBlocks = getTaskIdFromMessageBlocks(payload);
 
-          // ✅ Se não veio value, tenta seleção da Home
-          const selectedIds = buttonTaskId ? [buttonTaskId] : getSelectedTaskIdsFromHome(payload);
+          const homeSelectedIds = getSelectedTaskIdsFromHome(payload);
+          const isMessageAction = payload?.container?.type === "message";
+
+          // ✅ Se veio de mensagem, prioriza contexto da mensagem (ts/channel) e UID renderizado.
+          // ✅ Se veio da Home, usa seleção da Home.
+          const selectedIds = isMessageAction
+            ? Array.from(new Set([taskIdFromMessage, taskIdFromBlocks, buttonTaskId].filter(Boolean) as string[])).slice(0, 1)
+            : buttonTaskId
+              ? [buttonTaskId]
+              : homeSelectedIds;
+
+          req.log.info(
+            {
+              actionValueRaw: action?.value,
+              buttonTaskId,
+              taskIdFromMessage,
+              selectedIds,
+            },
+            "[RESCHEDULE] resolved task ids"
+          );
 
           if (selectedIds.length !== 1) {
             await sendBotDm(slack, userSlackId, "⚠️ Selecione apenas *1* tarefa por vez para reprogramar.");
@@ -1325,16 +1434,43 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           const taskId = selectedIds[0];
 
-          const task = await prisma.task.findFirst({
-            where: {
-              id: taskId,
-              status: { not: "done" },
-              OR: [{ responsible: userSlackId }, { delegation: userSlackId }],
+          const task = await prisma.task.findUnique({
+            where: { id: taskId },
+            select: {
+              id: true,
+              title: true,
+              term: true,
+              deadlineTime: true,
+              status: true,
+              responsible: true,
+              delegation: true,
+              carbonCopies: { select: { slackUserId: true } },
             },
-            select: { id: true, title: true, term: true, deadlineTime: true },
           });
 
-          if (!task) {
+          req.log.info(
+            {
+              taskId,
+              found: Boolean(task),
+              status: task?.status,
+              responsible: task?.responsible,
+              delegation: task?.delegation,
+              userSlackId,
+            },
+            "[RESCHEDULE] task lookup result"
+          );
+
+          if (!task || task.status === "done") {
+            await sendBotDm(slack, userSlackId, "Não encontrei essa tarefa (ou ela já foi concluída).");
+            await publishHome(slack, userSlackId);
+            return reply.status(200).send();
+          }
+
+          const canReschedule =
+            task.responsible === userSlackId ||
+            task.delegation === userSlackId;
+
+          if (!canReschedule) {
             await sendBotDm(slack, userSlackId, "Não encontrei essa tarefa (ou você não tem permissão para reprogramar).");
             await publishHome(slack, userSlackId);
             return reply.status(200).send();
@@ -1354,7 +1490,6 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           return reply.status(200).send();
         }
-
         // ---- Cancelar tarefa delegada (DELETE)
         if (actionId === DELEGATED_CANCEL_ACTION_ID) {
           if (!userSlackId) return reply.status(200).send();
@@ -1447,8 +1582,11 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
           if (!userSlackId) return reply.status(200).send();
 
           const selectedIds = getSelectedTaskIdsFromHome(payload);
-          if (!selectedIds.length) return reply.status(200).send();
 
+          if (selectedIds.length !== 1) {
+            await sendBotDm(slack, userSlackId, "⚠️ Selecione apenas *1* tarefa para editar.");
+            return reply.status(200).send();
+          }
           const taskId = selectedIds[0];
 
           const task = await prisma.task.findFirst({
@@ -1689,6 +1827,7 @@ export async function interactive(app: FastifyInstance, slack: WebClient) {
 
           if (actionId === BATCH_ADD_TASK_ACTION_ID) count += 1;
           if (actionId === BATCH_REMOVE_TASK_ACTION_ID) count -= 1;
+          count = Math.max(1, Math.min(count, 10));
 
           // refaz options de projetos (pra manter seleção válida)
           const projects = await prisma.project.findMany({
