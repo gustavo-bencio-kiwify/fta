@@ -241,12 +241,20 @@ export async function notifyTaskEdited(args: NotifyTaskEditedArgs) {
   }
 
   const changesText = changes.length ? changes.join("\n") : "• Nenhuma alteração detectada.";
+  const ccMentions = uniq(newCarbonCopies ?? []).map(mention).join(", ");
+
+  const targetsMentions = [
+    afterResponsible ? mention(afterResponsible) : null,
+    ccMentions || null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const threadText =
-    `${mention(afterResponsible)}, ${mention(editedBy)} realizou as seguintes alterações:\n\n` + `${changesText}`;
+    `${targetsMentions ? `${targetsMentions}, ` : ""}o usuário ${mention(editedBy)} realizou as seguintes alterações:\n\n${changesText}`;
 
   // ✅ 0) sempre tenta carimbar na thread da mensagem de criação (best-effort)
-  void postStampInOpenThread({ slack, taskId, editedBy }).catch(() => {});
+  void postStampInOpenThread({ slack, taskId, editedBy }).catch(() => { });
 
   // 1) tenta DM em grupo (MPIM) com thread
   try {
