@@ -16,36 +16,49 @@ export const TASK_PROJECT_ACTION_ID = "project" as const;
 // ✅ NOVO: depende de (external_select)
 export const TASK_DEPENDS_BLOCK_ID = "depends_block" as const;
 export const TASK_DEPENDS_ACTION_ID = "depends_on" as const;
+
 export const TASK_CAL_PRIVATE_BLOCK_ID = "task_cal_private_block" as const;
 export const TASK_CAL_PRIVATE_ACTION_ID = "task_cal_private_action" as const;
 
-
 export type ProjectOption = { id: string; name: string };
 
-export function createTaskModalView(args?: { projects?: ProjectOption[] }): ModalView {
+type CreateTaskModalArgs = {
+  projects?: ProjectOption[];
+  initialProjectId?: string | null; // ✅ suporte à pré-seleção
+};
+
+export function createTaskModalView(args?: CreateTaskModalArgs): ModalView {
   const projects = args?.projects ?? [];
+  const initialProjectId = args?.initialProjectId ?? null;
+
+  const projectOptions = projects.slice(0, 100).map((p) => ({
+    text: { type: "plain_text" as const, text: p.name.slice(0, 75) },
+    value: p.id,
+  }));
+
+  const initialProjectOption = initialProjectId
+    ? projectOptions.find((opt) => opt.value === initialProjectId)
+    : undefined;
 
   const projectBlock: KnownBlock =
     projects.length > 0
       ? ({
-        type: "input",
-        optional: true,
-        block_id: TASK_PROJECT_BLOCK_ID,
-        label: { type: "plain_text", text: "Projeto" },
-        element: {
-          type: "static_select",
-          action_id: TASK_PROJECT_ACTION_ID,
-          placeholder: { type: "plain_text", text: "Selecione um projeto" },
-          options: projects.slice(0, 100).map((p) => ({
-            text: { type: "plain_text", text: p.name },
-            value: p.id,
-          })),
-        },
-      } as const)
+          type: "input",
+          optional: true,
+          block_id: TASK_PROJECT_BLOCK_ID,
+          label: { type: "plain_text", text: "Projeto" },
+          element: {
+            type: "static_select",
+            action_id: TASK_PROJECT_ACTION_ID,
+            placeholder: { type: "plain_text", text: "Selecione um projeto" },
+            options: projectOptions,
+            ...(initialProjectOption ? { initial_option: initialProjectOption } : {}), // ✅ pré-seleção
+          },
+        } as const)
       : ({
-        type: "section",
-        text: { type: "mrkdwn", text: "_Nenhum projeto cadastrado ainda._" },
-      } as const);
+          type: "section",
+          text: { type: "mrkdwn", text: "_Nenhum projeto cadastrado ainda._" },
+        } as const);
 
   return {
     type: "modal",
@@ -111,7 +124,6 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
         },
       },
 
-
       {
         type: "input",
         optional: true,
@@ -174,7 +186,6 @@ export function createTaskModalView(args?: { projects?: ProjectOption[] }): Moda
           ],
         },
       },
-
     ],
   };
 }

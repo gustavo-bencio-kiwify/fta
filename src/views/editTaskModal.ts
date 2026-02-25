@@ -21,6 +21,10 @@ export const EDIT_RESP_ACTION_ID = "edit_resp" as const;
 export const EDIT_CC_BLOCK_ID = "edit_cc_block" as const;
 export const EDIT_CC_ACTION_ID = "edit_cc" as const;
 
+// ✅ NOVO: Projeto
+export const EDIT_PROJECT_BLOCK_ID = "edit_project_block" as const;
+export const EDIT_PROJECT_ACTION_ID = "edit_project" as const;
+
 export const EDIT_RECURRENCE_BLOCK_ID = "edit_recurrence_block" as const;
 export const EDIT_RECURRENCE_ACTION_ID = "edit_recurrence" as const;
 
@@ -29,6 +33,11 @@ export const EDIT_URGENCY_ACTION_ID = "edit_urgency" as const;
 
 export const EDIT_CAL_PRIVATE_BLOCK_ID = "edit_cal_private_block" as const;
 export const EDIT_CAL_PRIVATE_ACTION_ID = "edit_cal_private_action" as const;
+
+export type EditTaskProjectOption = {
+  id: string;
+  name: string;
+};
 
 type RecurrenceValue =
   | "none"
@@ -76,6 +85,10 @@ export function editTaskModalView(args: {
   carbonCopiesSlackIds: string[];
   recurrence: string | null; // pode vir "none" ou null
 
+  // ✅ NOVO: projeto atual + lista de projetos disponíveis
+  currentProjectId?: string | null;
+  projects?: EditTaskProjectOption[];
+
   urgency?: "light" | "asap" | "turbo" | string | null;
   calendarPrivate?: boolean;
 }): View {
@@ -98,11 +111,35 @@ export function editTaskModalView(args: {
   const urgencyRaw = String((args.urgency as any) ?? "light").trim();
   const urgencyValue =
     urgencyRaw === "asap" || urgencyRaw === "turbo" || urgencyRaw === "light" ? urgencyRaw : "light";
+
   const urgencyLabel = (u: string) => {
     if (u === "turbo") return "🔴 Turbo";
     if (u === "asap") return "🟡 ASAP";
     return "🟢 Light";
   };
+
+  // ✅ NOVO: bloco de projeto (com opção "Sem projeto" para permitir desvincular)
+  const incomingProjects = Array.isArray(args.projects) ? args.projects : [];
+  const uniqueProjects = Array.from(
+    new Map(
+      incomingProjects
+        .filter((p) => p?.id && p?.name)
+        .map((p) => [p.id, { id: p.id, name: p.name }])
+    ).values()
+  );
+
+  const projectOptions = [
+    { text: { type: "plain_text" as const, text: "Sem projeto" }, value: "none" },
+    ...uniqueProjects.slice(0, 99).map((p) => ({
+      text: { type: "plain_text" as const, text: p.name.slice(0, 75) },
+      value: p.id,
+    })),
+  ];
+
+  const selectedProjectOption =
+    args.currentProjectId && projectOptions.some((o) => o.value === args.currentProjectId)
+      ? projectOptions.find((o) => o.value === args.currentProjectId)
+      : projectOptions[0];
 
   return {
     type: "modal",
@@ -193,6 +230,21 @@ export function editTaskModalView(args: {
         label: { type: "plain_text", text: "Pessoas em cópia" },
       },
 
+      // ✅ NOVO: Projeto
+      {
+        type: "input",
+        optional: true,
+        block_id: EDIT_PROJECT_BLOCK_ID,
+        element: {
+          type: "static_select",
+          action_id: EDIT_PROJECT_ACTION_ID,
+          placeholder: { type: "plain_text", text: "Selecione um projeto" },
+          initial_option: selectedProjectOption,
+          options: projectOptions,
+        },
+        label: { type: "plain_text", text: "Projeto" },
+      },
+
       // Urgência
       {
         type: "input",
@@ -214,7 +266,6 @@ export function editTaskModalView(args: {
         label: { type: "plain_text", text: "Nível de urgência" },
       },
 
-      // Google Calendar: privado
       // Recorrência
       {
         type: "input",
@@ -235,6 +286,8 @@ export function editTaskModalView(args: {
         },
         label: { type: "plain_text", text: "Recorrência" },
       },
+
+      // Google Calendar: privado
       {
         type: "input",
         optional: true,
@@ -250,11 +303,11 @@ export function editTaskModalView(args: {
           ],
           initial_options: args.calendarPrivate
             ? [
-              {
-                text: { type: "plain_text", text: "🔒 Deixar evento privado" },
-                value: "private",
-              },
-            ]
+                {
+                  text: { type: "plain_text", text: "🔒 Deixar evento privado" },
+                  value: "private",
+                },
+              ]
             : undefined,
         },
         label: { type: "plain_text", text: "Google Calendar" },

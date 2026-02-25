@@ -15,12 +15,42 @@ export const PROJECT_END_ACTION_ID = "project_end" as const;
 export const PROJECT_MEMBERS_BLOCK_ID = "project_members_block" as const;
 export const PROJECT_MEMBERS_ACTION_ID = "project_members" as const;
 
-export function createProjectModalView(): ModalView {
+type CreateProjectModalMode = "create" | "edit";
+
+type CreateProjectModalViewParams = {
+  mode?: CreateProjectModalMode;
+  projectId?: string;
+  initialName?: string;
+  initialDescription?: string | null;
+  initialEndDateIso?: string | null; // YYYY-MM-DD
+  initialMemberSlackIds?: string[];
+};
+
+export function createProjectModalView(
+  params: CreateProjectModalViewParams = {}
+): ModalView {
+  const mode = params.mode ?? "create";
+
+  const initialName = params.initialName ?? "";
+  const initialDescription = params.initialDescription ?? "";
+  const initialEndDateIso = params.initialEndDateIso ?? null;
+  const initialMemberSlackIds = params.initialMemberSlackIds ?? [];
+
   return {
     type: "modal",
     callback_id: CREATE_PROJECT_MODAL_CALLBACK_ID,
-    title: { type: "plain_text", text: "Novo Projeto" },
-    submit: { type: "plain_text", text: "Criar" },
+    private_metadata: JSON.stringify({
+      mode,
+      projectId: params.projectId ?? null,
+    }),
+    title: {
+      type: "plain_text",
+      text: mode === "edit" ? "Editar Projeto" : "Novo Projeto",
+    },
+    submit: {
+      type: "plain_text",
+      text: mode === "edit" ? "Salvar" : "Criar",
+    },
     close: { type: "plain_text", text: "Cancelar" },
     blocks: [
       {
@@ -31,6 +61,7 @@ export function createProjectModalView(): ModalView {
           type: "plain_text_input",
           action_id: PROJECT_NAME_ACTION_ID,
           placeholder: { type: "plain_text", text: "Write something" },
+          ...(initialName ? { initial_value: initialName } : {}),
         },
       },
       {
@@ -43,6 +74,7 @@ export function createProjectModalView(): ModalView {
           action_id: PROJECT_DESC_ACTION_ID,
           multiline: true,
           placeholder: { type: "plain_text", text: "Write something" },
+          ...(initialDescription ? { initial_value: initialDescription } : {}),
         },
       },
       {
@@ -54,6 +86,7 @@ export function createProjectModalView(): ModalView {
           type: "datepicker",
           action_id: PROJECT_END_ACTION_ID,
           placeholder: { type: "plain_text", text: "Selecione uma data" },
+          ...(initialEndDateIso ? { initial_date: initialEndDateIso } : {}),
         },
       },
       {
@@ -65,8 +98,11 @@ export function createProjectModalView(): ModalView {
           type: "multi_users_select",
           action_id: PROJECT_MEMBERS_ACTION_ID,
           placeholder: { type: "plain_text", text: "Selecione usuários" },
+          ...(initialMemberSlackIds.length
+            ? { initial_users: initialMemberSlackIds }
+            : {}),
         },
       },
     ],
-  };
+  } as ModalView;
 }

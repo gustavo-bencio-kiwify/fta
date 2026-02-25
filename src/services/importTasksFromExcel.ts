@@ -283,9 +283,10 @@ export async function importTasksFromExcelSlackFile(args: {
     if (["id_slack_das_copias", "cc_slack_ids"].includes(h)) cols.ccSlackIds = colNumber;
   });
 
-  // ✅ Regras do seu template:
-  // - obrigatórios: Título*, E-mail do responsável*, Prazo*, Urgência*
-  if (!cols.title || !cols.responsibleEmail || !cols.term || !cols.urgency) {
+  // ✅ Regras do template:
+  // - obrigatórios: Título*, Prazo*, Urgência*
+  // - responsável: precisa existir pelo menos UMA coluna (E-mail OU ID Slack)
+  if (!cols.title || !cols.term || !cols.urgency || (!cols.responsibleEmail && !cols.responsibleSlackId)) {
     await slack.chat.postMessage({
       channel: channelId,
       thread_ts: threadTs,
@@ -293,11 +294,11 @@ export async function importTasksFromExcelSlackFile(args: {
         "⛔ Headers inválidos.\n" +
         "O arquivo precisa ter obrigatoriamente (linha 1):\n" +
         "• *Título**\n" +
-        "• *E-mail do responsável**\n" +
         "• *Prazo**\n" +
-        "• *Urgência**\n\n" +
+        "• *Urgência**\n" +
+        "• *E-mail do responsável* **OU** *ID Slack do responsável*\n\n" +
         "E opcionalmente:\n" +
-        "Descrição, ID Slack do responsável, ID Slack de quem delegou, Horário, Recorrência, Nome do Projeto, ID Projeto, E-mail das cópias, ID Slack das cópias.",
+        "Descrição, Horário, Recorrência, Nome do Projeto, ID Projeto, E-mail das cópias, ID Slack das cópias.",
     });
     return;
   }
@@ -311,29 +312,46 @@ export async function importTasksFromExcelSlackFile(args: {
     const title = cellToString(row.getCell(cols.title).value);
     if (!title) continue; // linha vazia
 
-    const responsibleEmailRaw = cellToString(row.getCell(cols.responsibleEmail).value);
-    const responsibleEmail = parseEmail(responsibleEmailRaw);
-    if (!responsibleEmail) {
-      failed.push({ row: r, reason: `E-mail do responsável inválido: "${responsibleEmailRaw}"` });
+    // ✅ Responsável: aceita E-mail OU ID Slack (ou ambos)
+    const responsibleEmailRaw = cols.responsibleEmail
+      ? cellToString(row.getCell(cols.responsibleEmail).value)
+      : "";
+
+    const responsibleSlackIdRaw = cols.responsibleSlackId
+      ? cellToString(row.getCell(cols.responsibleSlackId).value)
+      : "";
+
+    const responsibleEmail = responsibleEmailRaw ? parseEmail(responsibleEmailRaw) : null;
+    let responsibleSlackId = responsibleSlackIdRaw ? parseSlackUserId(responsibleSlackIdRaw) : null;
+
+    // Se nenhum dos dois foi informado/parseado, falha
+    if (!responsibleEmail && !responsibleSlackId) {
+      failed.push({
+        row: r,
+        reason:
+          `Informe um responsável válido por E-mail ou ID Slack ` +
+          `(email="${responsibleEmailRaw || ""}", slackId="${responsibleSlackIdRaw || ""}")`,
+      });
       continue;
     }
 
-    // tenta pegar slack id por:
-    // 1) coluna "ID Slack do responsável" (se vier)
-    // 2) lookupByEmail
-    let responsibleSlackId: string | null = null;
-
-    if (cols.responsibleSlackId) {
-      const raw = cellToString(row.getCell(cols.responsibleSlackId).value);
-      responsibleSlackId = raw ? parseSlackUserId(raw) : null;
-    }
-
-    if (!responsibleSlackId) {
+    // Se veio e-mail mas não veio Slack ID válido, tenta resolver pelo Slack
+    if (!responsibleSlackId && responsibleEmail) {
       responsibleSlackId = await slackUserIdFromEmail(slack, responsibleEmail);
     }
 
     if (!responsibleSlackId) {
-      failed.push({ row: r, reason: `Não consegui achar o Slack ID do responsável pelo e-mail: "${responsibleEmail}"` });
+      if (responsibleEmail) {
+        failed.push({
+          row: r,
+          reason: `Não consegui achar o Slack ID do responsável pelo e-mail: "${responsibleEmail}"`,
+        });
+      } else {
+        failed.push({
+          row: r,
+          reason: `ID Slack do responsável inválido: "${responsibleSlackIdRaw}"`,
+        });
+      }
       continue;
     }
 
@@ -445,11 +463,11 @@ export async function importTasksFromExcelSlackFile(args: {
           responsibleSlackId: task.responsible,
           carbonCopiesSlackIds: task.carbonCopies.map((c) => c.slackUserId),
         });
-      } catch {}
+      } catch { }
 
       try {
         await syncCalendarEventForTask(task.id);
-      } catch {}
+      } catch { }
 
       await notifyTaskCreated({
         slack,
@@ -471,8 +489,8 @@ export async function importTasksFromExcelSlackFile(args: {
   const okMsg = created.length ? `✅ Criei *${created.length}* tarefa(s).` : "⚠️ Não criei nenhuma tarefa.";
   const failMsg = failed.length
     ? `\n\n⛔ Falhas (${failed.length}):\n` +
-      failed.slice(0, 10).map((f) => `• Linha ${f.row}: ${f.reason}`).join("\n") +
-      (failed.length > 10 ? `\n… +${failed.length - 10} outras` : "")
+    failed.slice(0, 10).map((f) => `• Linha ${f.row}: ${f.reason}`).join("\n") +
+    (failed.length > 10 ? `\n… +${failed.length - 10} outras` : "")
     : "";
 
   await slack.chat.postMessage({
