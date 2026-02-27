@@ -295,9 +295,9 @@ function myLine(t: HomeTaskItem) {
   const dueText = due ? ` (${due})` : "";
 
   const delegatedBy = t.delegationName
-    ? ` — de ${atName(t.delegationName, t.delegation ?? null)}`
+    ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
     : t.delegation
-      ? ` — de ${atName(null, t.delegation)}`
+      ? ` — delegado por ${atName(null, t.delegation)}`
       : "";
 
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText}${delegatedBy}`;
@@ -305,7 +305,7 @@ function myLine(t: HomeTaskItem) {
 
 function delegatedLine(t: DelegatedTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (v ${due})` : "";
+  const dueText = due ? ` (Vence ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — resp: ${resp}`;
