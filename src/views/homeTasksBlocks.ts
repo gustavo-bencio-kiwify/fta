@@ -68,6 +68,10 @@ export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
 export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
 export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
 
+// ✅ pager buttons (precisam ser diferentes no mesmo actions block)
+export const HOME_PAGER_PREV_ACTION_ID = "home_pager_prev" as const;
+export const HOME_PAGER_NEXT_ACTION_ID = "home_pager_next" as const;
+
 // placeholders (sem funcionalidades ainda)
 export const DELEGATED_SEND_FUP_ACTION_ID = "delegated_send_fup" as const;
 export const DELEGATED_EDIT_ACTION_ID = "delegated_edit" as const;
@@ -83,6 +87,13 @@ export const PROJECT_VIEW_ACTION_ID = "project_view" as const;
 export const PROJECT_CREATE_TASK_ACTION_ID = "project_create_task" as const;
 export const PROJECT_EDIT_ACTION_ID = "project_edit" as const;
 export const PROJECT_CONCLUDE_ACTION_ID = "project_conclude" as const;
+
+export type PagerInfo = {
+  scope: "my" | "delegated" | "cc";
+  page: number; // 0-based
+  pageSize: number;
+  total: number;
+};
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -131,10 +142,75 @@ function feedbackStatusLabel(s: FeedbackHomeItem["status"]) {
   return "Rejeitado";
 }
 
+// =========================
+// ✅ Pager (Futuras)
+// =========================
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function renderPager(p?: PagerInfo | null): KnownBlock[] {
+  if (!p) return [];
+
+  const pageSize = Math.max(1, Number(p.pageSize ?? 10));
+  const total = Math.max(0, Number(p.total ?? 0));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (totalPages <= 1) return [];
+
+  const page = clamp(Number(p.page ?? 0) || 0, 0, totalPages - 1);
+
+  const canPrev = page > 0;
+  const canNext = page < totalPages - 1;
+
+  const labelScope =
+    p.scope === "my" ? "Suas futuras" : p.scope === "delegated" ? "Demandas futuras" : "Futuras (cópia)";
+
+  const actions: any[] = [];
+
+  if (canPrev) {
+    actions.push({
+      type: "button",
+      text: { type: "plain_text", text: "⬅️ Anteriores" },
+      action_id: HOME_PAGER_PREV_ACTION_ID,
+      value: JSON.stringify({ scope: p.scope, page: page - 1 }),
+    });
+  }
+
+  if (canNext) {
+    actions.push({
+      type: "button",
+      text: { type: "plain_text", text: "➡️ Próximas" },
+      action_id: HOME_PAGER_NEXT_ACTION_ID,
+      value: JSON.stringify({ scope: p.scope, page: page + 1 }),
+    });
+  }
+
+  const blocks: KnownBlock[] = [
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `_${labelScope}: página *${page + 1}* de *${totalPages}* (total ${total})_`,
+        },
+      ],
+    } as KnownBlock,
+  ];
+
+  if (actions.length) {
+    blocks.push({
+      type: "actions",
+      block_id: `pager_${p.scope}_future_${page}`,
+      elements: actions as any,
+    } as KnownBlock);
+  }
+
+  return blocks;
+}
+
 /**
- * ✅ Deixa o texto do checkbox em duas linhas:
- * - Linha 1: o "line" principal
- * - Linha 2: descrição (se existir)
+ * ✅ Deixa o texto do checkbox em uma linha (plain_text tem limite)
  */
 function buildCheckboxText(line: string, _description?: string | null) {
   const clean = (line ?? "").trim().replace(/\s+/g, " ");
@@ -143,9 +219,7 @@ function buildCheckboxText(line: string, _description?: string | null) {
 }
 
 /**
- * ✅ Render padrão com checkbox alinhado à esquerda:
- * - usa actions + checkboxes (texto em plain_text)
- * - description, se existir, vira 2ª linha do label
+ * ✅ 1 task = 1 block (actions + checkboxes)
  */
 function renderCheckboxRow(args: {
   blockId: string;
@@ -179,7 +253,6 @@ function myLine(t: HomeTaskItem) {
   const due = formatDateBR(t.term ?? null);
   const dueText = due ? ` (vence ${due})` : "";
 
-  // ✅ no plain_text não existe mention real, então usamos @Nome
   const delegatedBy = t.delegationName
     ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
     : t.delegation
@@ -202,7 +275,6 @@ function ccLineOnlyResponsible(t: CcTaskItem) {
   const dueText = due ? ` (vence ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
-  // ✅ CC: apenas responsável (sem delegado por)
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — responsável: ${resp}`;
 }
 
@@ -295,6 +367,11 @@ export function homeTasksBlocks(args: {
 
   // ✅ feedback
   myOpenFeedback?: FeedbackHomeItem[];
+
+  // ✅ pager (somente Futuras)
+  myFuturePager?: PagerInfo | null;
+  delegatedFuturePager?: PagerInfo | null;
+  ccFuturePager?: PagerInfo | null;
 }): KnownBlock[] {
   const blocks: KnownBlock[] = [];
 
@@ -311,6 +388,7 @@ export function homeTasksBlocks(args: {
   pushGroup("Amanhã", args.tasksTomorrow.flatMap(renderMyTaskItem));
   pushDivider();
   pushGroup("Futuras", args.tasksFuture.flatMap(renderMyTaskItem));
+  blocks.push(...renderPager(args.myFuturePager));
 
   blocks.push({
     type: "actions",
@@ -319,12 +397,7 @@ export function homeTasksBlocks(args: {
       { type: "button", text: { type: "plain_text", text: ":thread: Abrir thread" }, action_id: TASKS_SEND_QUESTION_ACTION_ID, value: "send_question" },
       { type: "button", text: { type: "plain_text", text: "📅 Reprogramar Prazo" }, action_id: TASKS_RESCHEDULE_ACTION_ID, value: "reschedule" },
       { type: "button", text: { type: "plain_text", text: "🔎 Ver detalhes" }, action_id: TASKS_VIEW_DETAILS_ACTION_ID, value: "details" },
-      {
-        type: "button",
-        text: { type: "plain_text", text: "✅ Concluir selecionadas" },
-        action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID,
-        value: "conclude_selected",
-      },
+      { type: "button", text: { type: "plain_text", text: "✅ Concluir selecionadas" }, action_id: TASKS_CONCLUDE_SELECTED_ACTION_ID, value: "conclude_selected" },
     ],
   } as KnownBlock);
   pushDivider();
@@ -338,6 +411,7 @@ export function homeTasksBlocks(args: {
   pushGroup("Amanhã", args.delegatedTomorrow.flatMap(renderDelegatedItem));
   pushDivider();
   pushGroup("Futuras", args.delegatedFuture.flatMap(renderDelegatedItem));
+  blocks.push(...renderPager(args.delegatedFuturePager));
 
   blocks.push({
     type: "actions",
@@ -361,6 +435,7 @@ export function homeTasksBlocks(args: {
   pushGroup("Amanhã", args.ccTomorrow.flatMap(renderCcItem));
   pushDivider();
   pushGroup("Futuras", args.ccFuture.flatMap(renderCcItem));
+  blocks.push(...renderPager(args.ccFuturePager));
 
   blocks.push({
     type: "actions",
@@ -379,10 +454,7 @@ export function homeTasksBlocks(args: {
   if (args.recurrences.length) {
     blocks.push(
       ...args.recurrences.flatMap((r) => [
-        {
-          type: "section",
-          text: { type: "mrkdwn", text: `• ${r.title} — \`${r.recurrence}\`` },
-        } as KnownBlock,
+        { type: "section", text: { type: "mrkdwn", text: `• ${r.title} — \`${r.recurrence}\`` } } as KnownBlock,
       ])
     );
   } else {
@@ -391,18 +463,19 @@ export function homeTasksBlocks(args: {
   pushDivider();
 
   // =========================
-  // PROJETOS
+  // PROJETOS (capado pra não estourar 100 blocks)
   // =========================
   pushHeader("📁 Projetos que participo");
-  if (args.projects.length) {
+  const MAX_PROJECTS = 8;
+  const visibleProjects = (args.projects ?? []).slice(0, MAX_PROJECTS);
+  const hiddenProjects = Math.max(0, (args.projects?.length ?? 0) - visibleProjects.length);
+
+  if (visibleProjects.length) {
     blocks.push(
-      ...args.projects.flatMap((p) => [
+      ...visibleProjects.flatMap((p) => [
         {
           type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*${p.name}*\n${p.openCount} abertas • ${p.doneCount} concluídas • ${p.overdueCount} atrasadas`,
-          },
+          text: { type: "mrkdwn", text: `*${p.name}*\n${p.openCount} abertas • ${p.doneCount} concluídas • ${p.overdueCount} atrasadas` },
         } as KnownBlock,
         {
           type: "actions",
@@ -415,6 +488,13 @@ export function homeTasksBlocks(args: {
         } as KnownBlock,
       ])
     );
+
+    if (hiddenProjects > 0) {
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: `_… e mais ${hiddenProjects} projetos (use "👀 Ver" para navegar)._` },
+      } as KnownBlock);
+    }
   } else {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nenhum_" } } as KnownBlock);
   }
@@ -425,45 +505,26 @@ export function homeTasksBlocks(args: {
   // BUGS / SUGESTÕES
   // =========================
   pushHeader("💡 Bugs e sugestões");
-
-  // ✅ lista dos tickets que eu abri e ainda não concluí
-  blocks.push({
-    type: "section",
-    text: { type: "mrkdwn", text: "*Seus tickets abertos:*" },
-  } as KnownBlock);
+  blocks.push({ type: "section", text: { type: "mrkdwn", text: "*Seus tickets abertos:*" } } as KnownBlock);
   blocks.push(...renderMyOpenFeedback(args.myOpenFeedback ?? []));
-
-  const feedbackButtons: any[] = [
-    {
-      type: "button",
-      text: { type: "plain_text", text: "🐞 Enviar bug/sugestão" },
-      action_id: HOME_FEEDBACK_OPEN_ACTION_ID,
-      value: "open_feedback",
-    },
-    {
-      type: "button",
-      text: { type: "plain_text", text: "📋 Ver bugs/sugestões" },
-      action_id: HOME_FEEDBACK_ADMIN_ACTION_ID,
-      value: "view_feedback",
-    },
-  ];
 
   blocks.push({
     type: "actions",
     block_id: "feedback_actions",
-    elements: feedbackButtons as any,
+    elements: [
+      { type: "button", text: { type: "plain_text", text: "🐞 Enviar bug/sugestão" }, action_id: HOME_FEEDBACK_OPEN_ACTION_ID, value: "open_feedback" },
+      { type: "button", text: { type: "plain_text", text: "📋 Ver bugs/sugestões" }, action_id: HOME_FEEDBACK_ADMIN_ACTION_ID, value: "view_feedback" },
+    ] as any,
   } as KnownBlock);
 
   pushDivider();
 
-  // ✅ PADDING MAIOR NO FINAL (pra não cortar os botões ao descer)
-  const bottomPadBlocks: KnownBlock[] = Array.from({ length: 5 }).map((_, i) => ({
+  // ✅ padding menor (1 só)
+  blocks.push({
     type: "context",
-    block_id: `bottom_pad_${i}`,
+    block_id: "bottom_pad_0",
     elements: [{ type: "mrkdwn", text: " " }],
-  })) as KnownBlock[];
-
-  blocks.push(...bottomPadBlocks);
+  } as KnownBlock);
 
   return blocks;
 }

@@ -9,14 +9,14 @@ import type { Prisma } from "../generated/prisma/browser";
 
 const SAO_PAULO_TZ = "America/Sao_Paulo";
 
-// ✅ ajuda a evitar Slack cortar o final (projetos some quando excede blocks)
-const MAX_TASKS_PER_SECTION = 100;
+// ✅ limites
+const MAX_BLOCKS = 100;
+const TODAY_MAX = 20;
+const TOMORROW_MAX = 20;
+const FUTURE_PAGE_SIZE = 10;
 
 // =========================================================
 // ✅ Slack ID -> Nome (cache)
-// - precisa do scope: users:read
-// - dentro do checkbox é plain_text, então não existe mention real.
-//   Aqui a gente transforma Uxxxx -> "Larissa Bittar" e mostra "@Larissa Bittar".
 // =========================================================
 const slackNameCache = new Map<string, string>();
 
@@ -39,7 +39,6 @@ async function getSlackDisplayName(slack: WebClient, userId: string): Promise<st
     slackNameCache.set(userId, finalName);
     return finalName;
   } catch {
-    // se faltar scope ou erro, cai pro próprio id (mas pelo menos não quebra)
     slackNameCache.set(userId, userId);
     return userId;
   }
@@ -108,20 +107,77 @@ function bucketByIso(taskTerm: Date | null, todayIso: string) {
   return "future";
 }
 
+// ✅ ordenação: turbo > asap > light, depois data (term), depois createdAt desc
+const URGENCY_RANK: Record<string, number> = { turbo: 0, asap: 1, light: 2 };
+function timeMs(term: Date | null) {
+  if (!term || Number.isNaN(term.getTime())) return Number.POSITIVE_INFINITY;
+  return term.getTime();
+}
+function sortTasks<A extends { urgency: string; term: Date | null; createdAt?: Date | null }>(arr: A[]) {
+  return [...arr].sort((a, b) => {
+    const ra = URGENCY_RANK[a.urgency] ?? 99;
+    const rb = URGENCY_RANK[b.urgency] ?? 99;
+    if (ra !== rb) return ra - rb;
+
+    const ta = timeMs(a.term);
+    const tb = timeMs(b.term);
+    if (ta !== tb) return ta - tb;
+
+    const ca = a.createdAt ? a.createdAt.getTime() : 0;
+    const cb = b.createdAt ? b.createdAt.getTime() : 0;
+    return cb - ca;
+  });
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function paginate<T>(items: T[], page: number, pageSize: number) {
+  const total = items.length;
+  const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  const safePage = clamp(page ?? 0, 0, maxPage);
+  const start = safePage * pageSize;
+  const end = start + pageSize;
+  return { total, page: safePage, pageSize, items: items.slice(start, end) };
+}
+
+type HomePaginationState = {
+  myFuturePage: number;
+  delegatedFuturePage: number;
+  ccFuturePage: number;
+};
+
+const DEFAULT_STATE: HomePaginationState = {
+  myFuturePage: 0,
+  delegatedFuturePage: 0,
+  ccFuturePage: 0,
+};
+
 type RawTask = {
   id: string;
   title: string;
   description: string | null;
-  delegation: string; // no seu schema é obrigatório
+  delegation: string;
   responsible: string;
   term: Date | null;
   urgency: "light" | "asap" | "turbo";
   recurrence: string | null;
   status: string;
+  createdAt: Date;
 };
 
-export async function publishHome(slack: WebClient, userId: string) {
+export async function publishHome(
+  slack: WebClient,
+  userId: string,
+  opts?: { state?: Partial<HomePaginationState> }
+) {
   const userSlackId = userId;
+
+  const state: HomePaginationState = {
+    ...DEFAULT_STATE,
+    ...(opts?.state ?? {}),
+  };
 
   // =========================================================
   // 1) Datas base
@@ -130,14 +186,10 @@ export async function publishHome(slack: WebClient, userId: string) {
   const todayIso = getSaoPauloTodayIso(now);
   const todayUtc = new Date(`${todayIso}T00:00:00.000Z`);
 
-  // ✅ regra de visibilidade: só aparece se não depende de ninguém OU se o "pai" já está done
   const visibleWhere: Prisma.TaskWhereInput = {
     OR: [{ dependsOnId: null }, { dependsOn: { status: "done" } }],
   };
 
-  // ✅ Regra pedida:
-  // Se delegador == responsável (mesmo usuário), NÃO aparece em "Minhas tarefas"
-  // e aparece só em "Você delegou".
   const excludeSelfDelegatedFromResponsible: Prisma.TaskWhereInput = {
     delegation: { not: userSlackId },
   };
@@ -145,13 +197,12 @@ export async function publishHome(slack: WebClient, userId: string) {
   // =========================================================
   // 2) Minhas tarefas (responsible)
   // =========================================================
-  const myTasks = (await prisma.task.findMany({
+  const myTasksRaw = (await prisma.task.findMany({
     where: {
       responsible: userSlackId,
       status: { not: "done" },
       AND: [visibleWhere, excludeSelfDelegatedFromResponsible],
     },
-    orderBy: [{ term: "asc" }, { createdAt: "desc" }],
     select: {
       id: true,
       title: true,
@@ -162,79 +213,75 @@ export async function publishHome(slack: WebClient, userId: string) {
       urgency: true,
       recurrence: true,
       status: true,
+      createdAt: true,
     },
   })) as unknown as RawTask[];
 
-  // ✅ resolve nomes para delegation (delegado por ...)
+  const myTasks = sortTasks(myTasksRaw);
+
   const myDelegationNameMap = await resolveSlackNames(
     slack,
     myTasks.map((t) => t.delegation)
   );
 
-  const tasksOverdue = myTasks
-    .filter((t) => bucketByIso(t.term, todayIso) === "overdue")
-    .slice(0, MAX_TASKS_PER_SECTION)
-    .map((t) => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
-      term: t.term,
-      urgency: t.urgency,
-    }));
+  const myTodayAll = myTasks.filter((t) => bucketByIso(t.term, todayIso) === "today");
+  const myTomorrowAll = myTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
+  const myFutureAll = myTasks.filter((t) => bucketByIso(t.term, todayIso) === "future");
 
-  const tasksToday = myTasks
-    .filter((t) => bucketByIso(t.term, todayIso) === "today")
-    .slice(0, MAX_TASKS_PER_SECTION)
-    .map((t) => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
-      term: t.term,
-      urgency: t.urgency,
-    }));
+  const tasksToday = myTodayAll.slice(0, TODAY_MAX).map((t) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    delegation: t.delegation,
+    delegationName: myDelegationNameMap.get(t.delegation) ?? null,
+    term: t.term,
+    urgency: t.urgency,
+  }));
 
-  const tasksTomorrow = myTasks
-    .filter((t) => bucketByIso(t.term, todayIso) === "tomorrow")
-    .slice(0, MAX_TASKS_PER_SECTION)
-    .map((t) => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
-      term: t.term,
-      urgency: t.urgency,
-    }));
+  const tasksTomorrow = myTomorrowAll.slice(0, TOMORROW_MAX).map((t) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    delegation: t.delegation,
+    delegationName: myDelegationNameMap.get(t.delegation) ?? null,
+    term: t.term,
+    urgency: t.urgency,
+  }));
 
-  const tasksFuture = myTasks
-    .filter((t) => bucketByIso(t.term, todayIso) === "future")
-    .slice(0, MAX_TASKS_PER_SECTION)
-    .map((t) => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      delegation: t.delegation,
-      delegationName: myDelegationNameMap.get(t.delegation) ?? null,
-      term: t.term,
-      urgency: t.urgency,
-    }));
+  const myFuturePag = paginate(myFutureAll, state.myFuturePage, FUTURE_PAGE_SIZE);
+
+  const tasksFuture = myFuturePag.items.map((t) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    delegation: t.delegation,
+    delegationName: myDelegationNameMap.get(t.delegation) ?? null,
+    term: t.term,
+    urgency: t.urgency,
+  }));
+
+  // (mantido por compatibilidade)
+  const tasksOverdue: any[] = [];
 
   // =========================================================
   // 3) Delegadas por mim (delegation)
   // =========================================================
-  const delegated = (await prisma.task.findMany({
+  const delegatedRaw = (await prisma.task.findMany({
     where: {
       delegation: userSlackId,
       status: { not: "done" },
       AND: [visibleWhere],
     },
-    orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true },
-    take: 60,
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      term: true,
+      urgency: true,
+      responsible: true,
+      createdAt: true,
+    },
+    take: 200,
   })) as unknown as Array<{
     id: string;
     title: string;
@@ -242,37 +289,48 @@ export async function publishHome(slack: WebClient, userId: string) {
     term: Date | null;
     urgency: "light" | "asap" | "turbo";
     responsible: string;
+    createdAt: Date;
   }>;
+
+  const delegated = sortTasks(delegatedRaw);
 
   const delegatedResponsibleNameMap = await resolveSlackNames(
     slack,
     delegated.map((t) => t.responsible)
   );
 
-  const delegatedToday = delegated
-    .filter((t) => bucketByIso(t.term, todayIso) === "today")
-    .slice(0, MAX_TASKS_PER_SECTION);
+  const delegatedTodayAll = delegated.filter((t) => bucketByIso(t.term, todayIso) === "today");
+  const delegatedTomorrowAll = delegated.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
+  const delegatedFutureAll = delegated.filter(
+    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
+  );
 
-  const delegatedTomorrow = delegated
-    .filter((t) => bucketByIso(t.term, todayIso) === "tomorrow")
-    .slice(0, MAX_TASKS_PER_SECTION);
+  const delegatedToday = delegatedTodayAll.slice(0, TODAY_MAX);
+  const delegatedTomorrow = delegatedTomorrowAll.slice(0, TOMORROW_MAX);
 
-  const delegatedFuture = delegated
-    .filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue")
-    .slice(0, MAX_TASKS_PER_SECTION);
+  const delegatedFuturePag = paginate(delegatedFutureAll, state.delegatedFuturePage, FUTURE_PAGE_SIZE);
+  const delegatedFuture = delegatedFuturePag.items;
 
   // =========================================================
   // 4) Em cópia (carbonCopies)
   // =========================================================
-  const ccTasks = (await prisma.task.findMany({
+  const ccRaw = (await prisma.task.findMany({
     where: {
       status: { not: "done" },
       carbonCopies: { some: { slackUserId: userSlackId } },
       AND: [visibleWhere],
     },
-    orderBy: [{ term: "asc" }, { createdAt: "desc" }],
-    select: { id: true, title: true, description: true, term: true, urgency: true, responsible: true, delegation: true },
-    take: 60,
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      term: true,
+      urgency: true,
+      responsible: true,
+      delegation: true,
+      createdAt: true,
+    },
+    take: 200,
   })) as unknown as Array<{
     id: string;
     title: string;
@@ -281,21 +339,30 @@ export async function publishHome(slack: WebClient, userId: string) {
     urgency: "light" | "asap" | "turbo";
     responsible: string;
     delegation: string;
+    createdAt: Date;
   }>;
+
+  const ccTasks = sortTasks(ccRaw);
 
   const ccNameMap = await resolveSlackNames(
     slack,
     ccTasks.flatMap((t) => [t.responsible, t.delegation])
   );
 
-  const ccToday = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today").slice(0, MAX_TASKS_PER_SECTION);
-  const ccTomorrow = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow").slice(0, MAX_TASKS_PER_SECTION);
-  const ccFuture = ccTasks
-    .filter((t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue")
-    .slice(0, MAX_TASKS_PER_SECTION);
+  const ccTodayAll = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "today");
+  const ccTomorrowAll = ccTasks.filter((t) => bucketByIso(t.term, todayIso) === "tomorrow");
+  const ccFutureAll = ccTasks.filter(
+    (t) => bucketByIso(t.term, todayIso) === "future" || bucketByIso(t.term, todayIso) === "overdue"
+  );
+
+  const ccToday = ccTodayAll.slice(0, TODAY_MAX);
+  const ccTomorrow = ccTomorrowAll.slice(0, TOMORROW_MAX);
+
+  const ccFuturePag = paginate(ccFutureAll, state.ccFuturePage, FUTURE_PAGE_SIZE);
+  const ccFuture = ccFuturePag.items;
 
   // =========================================================
-  // 5) Recorrências (lista)
+  // 5) Recorrências
   // =========================================================
   const recurrenceTasks = (await prisma.task.findMany({
     where: {
@@ -310,22 +377,14 @@ export async function publishHome(slack: WebClient, userId: string) {
   })) as unknown as Array<{ id: string; title: string; recurrence: string }>;
 
   // =========================================================
-  // 6) Projetos (visibilidade)
-  // - criador vê
-  // - membro com acesso vê
-  // - envolvido em task do projeto vê
+  // 6) Projetos
   // =========================================================
   const projects = await prisma.project.findMany({
     where: {
       status: "active",
       OR: [
-        // ✅ criador sempre enxerga
         { createdBySlackId: userSlackId },
-
-        // ✅ membros com acesso (visualização)
         { members: { some: { slackUserId: userSlackId } } },
-
-        // ✅ envolvidos em tasks do projeto
         {
           tasks: {
             some: {
@@ -349,27 +408,18 @@ export async function publishHome(slack: WebClient, userId: string) {
         prisma.task.count({ where: { projectId: p.id, status: { not: "done" }, AND: [visibleWhere] } }),
         prisma.task.count({ where: { projectId: p.id, status: "done" } }),
         prisma.task.count({
-          where: {
-            projectId: p.id,
-            status: { not: "done" },
-            term: { lt: todayUtc },
-            AND: [visibleWhere],
-          },
+          where: { projectId: p.id, status: { not: "done" }, term: { lt: todayUtc }, AND: [visibleWhere] },
         }),
       ]);
-
       return { id: p.id, name: p.name, openCount, doneCount, overdueCount };
     })
   );
 
   // =========================================================
-  // ✅ 6.5) Feedback: meus tickets abertos (pending/wip)
+  // 6.5) Feedback
   // =========================================================
   const myOpenFeedback = await prisma.feedback.findMany({
-    where: {
-      createdBySlackId: userSlackId,
-      status: { in: ["pending", "wip"] as any },
-    },
+    where: { createdBySlackId: userSlackId, status: { in: ["pending", "wip"] as any } },
     orderBy: [{ updatedAt: "desc" }],
     take: 8,
     select: { id: true, type: true, title: true, status: true, updatedAt: true },
@@ -378,7 +428,7 @@ export async function publishHome(slack: WebClient, userId: string) {
   // =========================================================
   // 7) Render Home
   // =========================================================
-  const blocks = homeHeaderActionsBlocks().concat(
+  let blocks = homeHeaderActionsBlocks().concat(
     homeTasksBlocks({
       tasksOverdue,
       tasksToday,
@@ -458,14 +508,34 @@ export async function publishHome(slack: WebClient, userId: string) {
         updatedAt: f.updatedAt,
       })),
 
-      // ✅ se seu homeTasksBlocks ainda usar essa flag para mostrar o botão "Ver bugs/sugestões",
-      // deixe true para aparecer para todos
-      showFeedbackAdminButton: true,
+      // ✅ pager infos
+      myFuturePager: { scope: "my", page: myFuturePag.page, pageSize: myFuturePag.pageSize, total: myFuturePag.total },
+      delegatedFuturePager: {
+        scope: "delegated",
+        page: delegatedFuturePag.page,
+        pageSize: delegatedFuturePag.pageSize,
+        total: delegatedFuturePag.total,
+      },
+      ccFuturePager: { scope: "cc", page: ccFuturePag.page, pageSize: ccFuturePag.pageSize, total: ccFuturePag.total },
     } as any)
   );
 
+  // ✅ guarda de segurança (se ainda assim estourar por algum motivo)
+  if (blocks.length > MAX_BLOCKS) {
+    console.warn(`[HOME] too many blocks: ${blocks.length}. trimming to ${MAX_BLOCKS}`);
+    blocks = blocks.slice(0, MAX_BLOCKS);
+  }
+
   await slack.views.publish({
     user_id: userSlackId,
-    view: { type: "home", blocks },
+    view: {
+      type: "home",
+      private_metadata: JSON.stringify({
+        myFuturePage: myFuturePag.page,
+        delegatedFuturePage: delegatedFuturePag.page,
+        ccFuturePage: ccFuturePag.page,
+      }),
+      blocks,
+    },
   });
 }
