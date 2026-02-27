@@ -8,7 +8,7 @@ export type HomeTaskItem = {
   title: string;
   description?: string | null;
   delegation?: string | null;
-  delegationName?: string | null; // ✅ novo (para exibir nome no plain_text)
+  delegationName?: string | null;
   term?: Date | string | null;
   urgency: Urgency;
 };
@@ -16,21 +16,21 @@ export type HomeTaskItem = {
 export type DelegatedTaskItem = {
   id: string;
   title: string;
-  description?: string | null; // ✅ novo
+  description?: string | null;
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
-  responsibleName?: string | null; // ✅ novo
+  responsibleName?: string | null;
 };
 
 export type CcTaskItem = {
   id: string;
   title: string;
-  description?: string | null; // ✅ novo
+  description?: string | null;
   term?: Date | string | null;
   urgency: Urgency;
   responsible: string;
-  responsibleName?: string | null; // ✅ novo (CC mostra só responsável)
+  responsibleName?: string | null;
   delegation?: string | null;
   delegationName?: string | null;
 };
@@ -68,11 +68,11 @@ export const TASKS_RESCHEDULE_ACTION_ID = "tasks_reschedule" as const;
 export const TASKS_VIEW_DETAILS_ACTION_ID = "tasks_view_details" as const;
 export const TASKS_REFRESH_ACTION_ID = "tasks_refresh" as const;
 
-// ✅ pager buttons (precisam ser diferentes no mesmo actions block)
+// ✅ pager buttons
 export const HOME_PAGER_PREV_ACTION_ID = "home_pager_prev" as const;
 export const HOME_PAGER_NEXT_ACTION_ID = "home_pager_next" as const;
 
-// placeholders (sem funcionalidades ainda)
+// placeholders
 export const DELEGATED_SEND_FUP_ACTION_ID = "delegated_send_fup" as const;
 export const DELEGATED_EDIT_ACTION_ID = "delegated_edit" as const;
 export const DELEGATED_CANCEL_ACTION_ID = "delegated_cancel" as const;
@@ -94,6 +94,17 @@ export type PagerInfo = {
   pageSize: number;
   total: number;
 };
+
+// =======================================
+// ⚠️ Slack limits (para não dar invalid_arguments)
+// - option.text: ~75 chars
+// - option.description: ~75 chars
+// =======================================
+const OPTION_TEXT_MAX = 300;
+const OPTION_DESC_MAX = 75;
+
+// “pagina” de opções dentro de um único bloco de checkboxes (igual seu AppScript)
+const CHECKBOX_PAGE_SIZE = 10;
 
 function urgencyEmoji(u: Urgency) {
   if (u === "light") return "🟢";
@@ -192,7 +203,7 @@ function renderPager(p?: PagerInfo | null): KnownBlock[] {
       elements: [
         {
           type: "mrkdwn",
-          text: `_${labelScope}: página *${page + 1}* de *${totalPages}* (total ${total})_`,
+          text: `_${labelScope}: página *${page + 1}* delegado por *${totalPages}* (total ${total})_`,
         },
       ],
     } as KnownBlock,
@@ -201,7 +212,7 @@ function renderPager(p?: PagerInfo | null): KnownBlock[] {
   if (actions.length) {
     blocks.push({
       type: "actions",
-      block_id: `pager_${p.scope}_future_${page}`,
+      block_id: `pager_${p.scope}_future_${page}`, // ✅ evita action_id duplicado no mesmo block
       elements: actions as any,
     } as KnownBlock);
   }
@@ -209,54 +220,84 @@ function renderPager(p?: PagerInfo | null): KnownBlock[] {
   return blocks;
 }
 
-/**
- * ✅ Deixa o texto do checkbox em uma linha (plain_text tem limite)
- */
-function buildCheckboxText(line: string, _description?: string | null) {
-  const clean = (line ?? "").trim().replace(/\s+/g, " ");
-  const MAX = 75; // limite seguro para option.text
-  return clean.length <= MAX ? clean : clean.slice(0, MAX - 1) + "…";
+// =========================
+// ✅ Compact checkbox blocks (igual AppScript)
+// - 1 bloco “section” com accessory checkboxes contendo até 10 opções
+// - description da task vai em option.description (fica coladinho)
+// =========================
+function cleanOneLine(s?: string | null) {
+  return String(s ?? "").replace(/\s+/g, " ").replace(/\n+/g, " ").trim();
 }
 
-/**
- * ✅ 1 task = 1 block (actions + checkboxes)
- */
-function renderCheckboxRow(args: {
-  blockId: string;
-  taskId: string;
-  line: string;
-  description?: string | null;
+function hardCut(s: string, max: number) {
+  const t = cleanOneLine(s);
+  if (!t) return "";
+  return t.length <= max ? t : t.slice(0, max); // ✅ sem "…"
+}
+
+function makeOption(value: string, line: string, desc?: string | null) {
+  const text = hardCut(line, OPTION_TEXT_MAX);
+  const d = cleanOneLine(desc ?? "");
+  const opt: any = {
+    text: { type: "plain_text", text },
+    value,
+  };
+  if (d) {
+    opt.description = { type: "plain_text", text: hardCut(d, OPTION_DESC_MAX) };
+  }
+  return opt;
+}
+
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function groupWithCheckboxes(args: {
+  title: string;
+  blockIdPrefix: string;
+  options: any[];
 }): KnownBlock[] {
-  const text = buildCheckboxText(args.line, args.description);
+  const { title, blockIdPrefix, options } = args;
 
-  return [
-    {
-      type: "actions",
-      block_id: args.blockId,
-      elements: [
-        {
-          type: "checkboxes",
-          action_id: TASK_SELECT_ACTION_ID,
-          options: [
-            {
-              text: { type: "plain_text", text },
-              value: args.taskId,
-            },
-          ],
-        },
-      ],
-    } as KnownBlock,
-  ];
+  if (!options.length) {
+    return [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `*${title}:* _Nenhuma_` },
+      } as KnownBlock,
+    ];
+  }
+
+  const pages = chunk(options, CHECKBOX_PAGE_SIZE);
+
+  return pages.map((slice, idx) => {
+    const showTitle = idx === 0;
+    return {
+      type: "section",
+      block_id: `${blockIdPrefix}_${idx + 1}`,
+      text: { type: "mrkdwn", text: showTitle ? `*${title}:*` : " " },
+      accessory: {
+        type: "checkboxes",
+        action_id: TASK_SELECT_ACTION_ID,
+        options: slice,
+      },
+    } as any as KnownBlock;
+  });
 }
 
+// =========================
+// ✅ Linhas (mais compactas para caber no Slack)
+// =========================
 function myLine(t: HomeTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (vence ${due})` : "";
+  const dueText = due ? ` (${due})` : "";
 
   const delegatedBy = t.delegationName
-    ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
+    ? ` — de ${atName(t.delegationName, t.delegation ?? null)}`
     : t.delegation
-      ? ` — delegado por ${atName(null, t.delegation)}`
+      ? ` — de ${atName(null, t.delegation)}`
       : "";
 
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText}${delegatedBy}`;
@@ -264,54 +305,28 @@ function myLine(t: HomeTaskItem) {
 
 function delegatedLine(t: DelegatedTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (vence ${due})` : "";
+  const dueText = due ? ` (v ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
-  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — responsável: ${resp}`;
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — resp: ${resp}`;
 }
 
 function ccLineOnlyResponsible(t: CcTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (vence ${due})` : "";
+  const dueText = due ? ` (v ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
-  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — responsável: ${resp}`;
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — resp: ${resp}`;
 }
 
-function renderMyTaskItem(t: HomeTaskItem): KnownBlock[] {
-  return renderCheckboxRow({
-    blockId: `task_${t.id}`,
-    taskId: t.id,
-    line: myLine(t),
-    description: t.description ?? null,
-  });
+function renderMyOptions(items: HomeTaskItem[]) {
+  return (items ?? []).map((t) => makeOption(t.id, myLine(t), t.description ?? null));
 }
-
-function renderDelegatedItem(t: DelegatedTaskItem): KnownBlock[] {
-  return renderCheckboxRow({
-    blockId: `delegated_${t.id}`,
-    taskId: t.id,
-    line: delegatedLine(t),
-    description: t.description ?? null,
-  });
+function renderDelegatedOptions(items: DelegatedTaskItem[]) {
+  return (items ?? []).map((t) => makeOption(t.id, delegatedLine(t), t.description ?? null));
 }
-
-function renderCcItem(t: CcTaskItem): KnownBlock[] {
-  return renderCheckboxRow({
-    blockId: `cc_${t.id}`,
-    taskId: t.id,
-    line: ccLineOnlyResponsible(t),
-    description: t.description ?? null,
-  });
-}
-
-function renderGroup(title: string, blocksInside: KnownBlock[]): KnownBlock[] {
-  return [
-    ({ type: "section", text: { type: "mrkdwn", text: `*${title}:*` } } as KnownBlock),
-    ...(blocksInside.length
-      ? blocksInside
-      : [({ type: "section", text: { type: "mrkdwn", text: "_Nenhuma_" } } as KnownBlock)]),
-  ];
+function renderCcOptions(items: CcTaskItem[]) {
+  return (items ?? []).map((t) => makeOption(t.id, ccLineOnlyResponsible(t), t.description ?? null));
 }
 
 function renderMyOpenFeedback(items: FeedbackHomeItem[]): KnownBlock[] {
@@ -344,7 +359,7 @@ function renderMyOpenFeedback(items: FeedbackHomeItem[]): KnownBlock[] {
 
 export function homeTasksBlocks(args: {
   // você é responsável
-  tasksOverdue: HomeTaskItem[]; // (mantido no tipo por compatibilidade, mas não renderiza mais)
+  tasksOverdue: HomeTaskItem[]; // mantido por compatibilidade
   tasksToday: HomeTaskItem[];
   tasksTomorrow: HomeTaskItem[];
   tasksFuture: HomeTaskItem[];
@@ -365,29 +380,37 @@ export function homeTasksBlocks(args: {
   // projetos
   projects: ProjectItem[];
 
-  // ✅ feedback
+  // feedback
   myOpenFeedback?: FeedbackHomeItem[];
 
-  // ✅ pager (somente Futuras)
+  // pager (somente Futuras)
   myFuturePager?: PagerInfo | null;
   delegatedFuturePager?: PagerInfo | null;
   ccFuturePager?: PagerInfo | null;
 }): KnownBlock[] {
   const blocks: KnownBlock[] = [];
 
-  const pushDivider = () => blocks.push({ type: "divider" });
-  const pushHeader = (text: string) => blocks.push({ type: "header", text: { type: "plain_text", text } });
-  const pushGroup = (title: string, listBlocks: KnownBlock[]) => blocks.push(...renderGroup(title, listBlocks));
+  const pushDivider = () => blocks.push({ type: "divider" } as KnownBlock);
+  const pushHeader = (text: string) => blocks.push({ type: "header", text: { type: "plain_text", text } } as KnownBlock);
 
   // =========================
   // SUAS TAREFAS (RESPONSÁVEL)
   // =========================
   pushHeader("📌 Suas tarefas (você é responsável)");
-  pushGroup("Hoje", args.tasksToday.flatMap(renderMyTaskItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Hoje", blockIdPrefix: "my_today", options: renderMyOptions(args.tasksToday) })
+  );
   pushDivider();
-  pushGroup("Amanhã", args.tasksTomorrow.flatMap(renderMyTaskItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Amanhã", blockIdPrefix: "my_tomorrow", options: renderMyOptions(args.tasksTomorrow) })
+  );
   pushDivider();
-  pushGroup("Futuras", args.tasksFuture.flatMap(renderMyTaskItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Futuras", blockIdPrefix: "my_future", options: renderMyOptions(args.tasksFuture) })
+  );
   blocks.push(...renderPager(args.myFuturePager));
 
   blocks.push({
@@ -406,11 +429,20 @@ export function homeTasksBlocks(args: {
   // SUAS DEMANDAS (DELEGOU)
   // =========================
   pushHeader("📌 Suas demandas (você delegou)");
-  pushGroup("Hoje", args.delegatedToday.flatMap(renderDelegatedItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Hoje", blockIdPrefix: "del_today", options: renderDelegatedOptions(args.delegatedToday) })
+  );
   pushDivider();
-  pushGroup("Amanhã", args.delegatedTomorrow.flatMap(renderDelegatedItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Amanhã", blockIdPrefix: "del_tomorrow", options: renderDelegatedOptions(args.delegatedTomorrow) })
+  );
   pushDivider();
-  pushGroup("Futuras", args.delegatedFuture.flatMap(renderDelegatedItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Futuras", blockIdPrefix: "del_future", options: renderDelegatedOptions(args.delegatedFuture) })
+  );
   blocks.push(...renderPager(args.delegatedFuturePager));
 
   blocks.push({
@@ -430,11 +462,20 @@ export function homeTasksBlocks(args: {
   // EM CÓPIA
   // =========================
   pushHeader("📌 Acompanhando (você está em cópia)");
-  pushGroup("Hoje", args.ccToday.flatMap(renderCcItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Hoje", blockIdPrefix: "cc_today", options: renderCcOptions(args.ccToday) })
+  );
   pushDivider();
-  pushGroup("Amanhã", args.ccTomorrow.flatMap(renderCcItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Amanhã", blockIdPrefix: "cc_tomorrow", options: renderCcOptions(args.ccTomorrow) })
+  );
   pushDivider();
-  pushGroup("Futuras", args.ccFuture.flatMap(renderCcItem));
+
+  blocks.push(
+    ...groupWithCheckboxes({ title: "Futuras", blockIdPrefix: "cc_future", options: renderCcOptions(args.ccFuture) })
+  );
   blocks.push(...renderPager(args.ccFuturePager));
 
   blocks.push({
@@ -463,7 +504,7 @@ export function homeTasksBlocks(args: {
   pushDivider();
 
   // =========================
-  // PROJETOS (capado pra não estourar 100 blocks)
+  // PROJETOS (capado)
   // =========================
   pushHeader("📁 Projetos que participo");
   const MAX_PROJECTS = 8;
@@ -519,7 +560,7 @@ export function homeTasksBlocks(args: {
 
   pushDivider();
 
-  // ✅ padding menor (1 só)
+  // padding pequeno
   blocks.push({
     type: "context",
     block_id: "bottom_pad_0",
