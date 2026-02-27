@@ -108,20 +108,23 @@ function bucketByIso(taskTerm: Date | null, todayIso: string) {
 }
 
 // ✅ ordenação: turbo > asap > light, depois data (term), depois createdAt desc
+// ✅ ordenação: data (term ASC), depois urgência (turbo > asap > light), depois createdAt DESC
 const URGENCY_RANK: Record<string, number> = { turbo: 0, asap: 1, light: 2 };
+
 function timeMs(term: Date | null) {
   if (!term || Number.isNaN(term.getTime())) return Number.POSITIVE_INFINITY;
   return term.getTime();
 }
+
 function sortTasks<A extends { urgency: string; term: Date | null; createdAt?: Date | null }>(arr: A[]) {
   return [...arr].sort((a, b) => {
-    const ra = URGENCY_RANK[a.urgency] ?? 99;
-    const rb = URGENCY_RANK[b.urgency] ?? 99;
-    if (ra !== rb) return ra - rb;
-
     const ta = timeMs(a.term);
     const tb = timeMs(b.term);
     if (ta !== tb) return ta - tb;
+
+    const ra = URGENCY_RANK[a.urgency] ?? 99;
+    const rb = URGENCY_RANK[b.urgency] ?? 99;
+    if (ra !== rb) return ra - rb;
 
     const ca = a.createdAt ? a.createdAt.getTime() : 0;
     const cb = b.createdAt ? b.createdAt.getTime() : 0;
