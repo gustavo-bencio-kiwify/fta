@@ -10,7 +10,7 @@ import type { Prisma } from "../generated/prisma/browser";
 const SAO_PAULO_TZ = "America/Sao_Paulo";
 
 // ✅ ajuda a evitar Slack cortar o final (projetos some quando excede blocks)
-const MAX_TASKS_PER_SECTION = 20;
+const MAX_TASKS_PER_SECTION = 50;
 
 // =========================================================
 // ✅ Slack ID -> Nome (cache)
