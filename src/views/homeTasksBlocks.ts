@@ -292,7 +292,7 @@ function groupWithCheckboxes(args: {
 // =========================
 function myLine(t: HomeTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (${due})` : "";
+  const dueText = due ? ` (vence ${due})` : "";
 
   const delegatedBy = t.delegationName
     ? ` — delegado por ${atName(t.delegationName, t.delegation ?? null)}`
@@ -305,7 +305,7 @@ function myLine(t: HomeTaskItem) {
 
 function delegatedLine(t: DelegatedTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (Vence ${due})` : "";
+  const dueText = due ? ` (vence ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
   return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — Responsável: ${resp}`;
@@ -313,10 +313,10 @@ function delegatedLine(t: DelegatedTaskItem) {
 
 function ccLineOnlyResponsible(t: CcTaskItem) {
   const due = formatDateBR(t.term ?? null);
-  const dueText = due ? ` (v ${due})` : "";
+  const dueText = due ? ` (vence ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
-  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — resp: ${resp}`;
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — Responsável: ${resp}`;
 }
 
 function renderMyOptions(items: HomeTaskItem[]) {
