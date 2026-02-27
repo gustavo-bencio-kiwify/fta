@@ -53,8 +53,7 @@ export async function notifyTaskUrgencyReminder(args: {
 }) {
   const { slack, dateIso, task } = args;
 
-  const time = task.deadlineTime ? ` às *${task.deadlineTime}*` : "";
-  const text = `⏰ ${mention(task.responsibleSlackId)} lembrete (${fmtDatePt(dateIso)}): *${task.title}* ainda está pendente.${time}`;
+  const text = `⏰ ${mention(task.responsibleSlackId)} lembrete (${fmtDatePt(dateIso)}): *${task.title}* ainda está pendente.`;
 
   // ✅ Preferência: postar dentro da thread da abertura
   if (task.slackOpenChannelId && task.slackOpenMessageTs) {
