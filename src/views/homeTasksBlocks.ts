@@ -100,7 +100,7 @@ export type PagerInfo = {
 // - option.text: ~75 chars
 // - option.description: ~75 chars
 // =======================================
-const OPTION_TEXT_MAX = 300;
+const OPTION_TEXT_MAX = 150;
 const OPTION_DESC_MAX = 75;
 
 // “pagina” de opções dentro de um único bloco de checkboxes (igual seu AppScript)
@@ -308,7 +308,7 @@ function delegatedLine(t: DelegatedTaskItem) {
   const dueText = due ? ` (Vence ${due})` : "";
 
   const resp = atName(t.responsibleName ?? null, t.responsible);
-  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — resp: ${resp}`;
+  return `${urgencyEmoji(t.urgency)} ${t.title}${dueText} — Responsável: ${resp}`;
 }
 
 function ccLineOnlyResponsible(t: CcTaskItem) {
