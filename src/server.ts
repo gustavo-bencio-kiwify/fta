@@ -44,7 +44,6 @@ if (isDev || runLocalCrons) {
     // em dev recomendo rodar no boot pra você testar
     runOnBoot: true,
 
-    // schedule real (todo dia 03:10 SP)
     cronExpr: "10 3 * * *",
     timezone: "America/Sao_Paulo",
     days: 7,
